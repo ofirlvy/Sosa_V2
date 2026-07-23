@@ -331,4 +331,97 @@ export const BoardChatDrawer: React.FC<BoardChatDrawerProps> = ({
                 <button
                   key={card.id}
                   onClick={() => { setAttachedCardId(card.id); setPickerOpen(false); setPickerQuery(''); }}
-                  classNam
+                  className="w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 hover:bg-[#3A5C34]/[0.06] transition-colors text-left"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-[#3A5C34]/10 text-[#3A5C34] flex items-center justify-center shrink-0">
+                    {cardTypeIcon(card.type)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span dir="auto" className="block text-[13px] font-semibold text-gray-800 truncate">{cardTitle(card)}</span>
+                    <span className="block text-[10px] text-gray-400 truncate">{wsName}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* @mention picker */}
+        {mentionQuery !== null && mentionResults.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 mb-1.5 bg-white rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-gray-100 overflow-hidden z-20">
+            <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-2 text-[11px] font-semibold text-gray-400">
+              <AtSign size={13} className="text-[#3A5C34]" /> Mention someone
+            </div>
+            <div className="max-h-56 overflow-y-auto no-scrollbar p-1.5 space-y-0.5">
+              {mentionResults.map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => pickMention(m)}
+                  className="w-full px-2.5 py-2 rounded-xl flex items-center gap-2.5 hover:bg-[#3A5C34]/[0.06] transition-colors text-left"
+                >
+                  <span className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3A5C34] to-[#2d4a29] text-white text-[11px] font-bold flex items-center justify-center shrink-0 overflow-hidden">
+                    {m.avatarUrl ? <img src={m.avatarUrl} className="w-full h-full object-cover" /> : memberInitials(m.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-semibold text-gray-800 truncate">{m.name}</span>
+                    <span className="block text-[10px] text-gray-400 truncate">{m.email || m.role}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Attached card chip */}
+        {attachedCardId && (
+          <div className="mb-2 flex items-center gap-1.5">
+            <CardChip cardId={attachedCardId} small />
+            <button onClick={() => setAttachedCardId(null)} className="w-5 h-5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex items-center justify-center"><X size={11} /></button>
+          </div>
+        )}
+
+        <div className="flex items-end gap-2 bg-[#F9F8F6] rounded-2xl border border-gray-200 p-1.5 transition-colors focus-within:border-[#3A5C34]/40">
+          <button
+            onClick={() => setPickerOpen(v => !v)}
+            title="Reference a card"
+            className={`shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${pickerOpen ? 'bg-[#3A5C34] text-white' : 'text-[#3A5C34] hover:bg-[#3A5C34]/10'}`}
+          >
+            <Plus size={16} strokeWidth={2.5} />
+          </button>
+          <textarea
+            ref={taRef}
+            value={draft}
+            dir="auto"
+            rows={1}
+            placeholder="Write a message… (@ to mention)"
+            onChange={(e) => {
+              const v = e.target.value;
+              // Typing "/" at the start opens the card picker (Notion-style).
+              if (v === '/') { setPickerOpen(true); setDraft(''); return; }
+              setDraft(v);
+              // "@word" at the caret opens the member picker.
+              setMentionQuery(members.length ? parseMentionQuery(v, e.target.selectionStart) : null);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (mentionQuery !== null && mentionResults.length && (e.key === 'Enter' || e.key === 'Tab')) {
+                e.preventDefault(); pickMention(mentionResults[0]); return;
+              }
+              if (e.key === 'Escape' && mentionQuery !== null) { e.preventDefault(); setMentionQuery(null); return; }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+            }}
+            className="flex-1 bg-transparent border-none outline-none focus:ring-0 resize-none text-[13px] leading-snug py-1.5 max-h-[120px] placeholder-gray-400"
+          />
+          <button
+            onClick={send}
+            disabled={!draft.trim()}
+            className="shrink-0 w-8 h-8 rounded-xl bg-[#3A5C34] text-white flex items-center justify-center hover:bg-[#2d4a29] disabled:opacity-30 transition-all active:scale-95"
+          >
+            <Send size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

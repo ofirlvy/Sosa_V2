@@ -325,4 +325,180 @@ export const GridPlannerCard: React.FC<GridPlannerCardProps> = (props) => {
                                     <div className="w-10 h-10 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center text-gray-400 overflow-hidden">
                                         {media?.url ? (
                                             media.type === 'image' ? (
-         
+                                                <img src={media.url} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <VideoThumb url={media.url} thumbnail={media.thumbnail} />
+                                            )
+                                        ) : (
+                                            <FileImage size={16} />
+                                        )}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="text-[13px] font-semibold text-gray-900 truncate group-hover:text-[#3A5C34]">
+                                            {(post.content as PostCardContent).title || (isReel ? "Untitled Reel" : "Untitled Post")}
+                                        </div>
+                                        <div className="text-[11px] text-gray-400 truncate">
+                                            {isReel ? 'Reel' : ((post.content as PostCardContent).sku || "No SKU")}
+                                        </div>
+                                    </div>
+                                    <div className="ml-auto opacity-0 group-hover:opacity-100 text-[#3A5C34] transition-opacity">
+                                        <Check size={16} />
+                                    </div>
+                                </button>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+
+        {/* Footer / Action Bar */}
+        <div className="mt-auto px-5 py-4 border-t border-gray-100 flex items-center justify-between bg-white shrink-0">
+            <div className="flex items-center gap-2">
+                 <div className="h-8 px-3 rounded-full bg-gray-100 border border-white flex items-center justify-center text-[13px] font-semibold text-gray-600 shadow-sm gap-2">
+                    <Calendar size={13} className="text-gray-400"/>
+                    <span className="uppercase tracking-wide">{MONTHS[content.config?.month || 0]} {content.config?.year}</span>
+                 </div>
+                 
+                 <div className="h-8 px-3 rounded-full bg-gray-100 border border-white flex items-center justify-center text-[13px] font-semibold text-gray-600 shadow-sm">
+                    {slots.length} Posts
+                 </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); setTempConfig(content.config || defaultConfig); setViewMode('settings'); }}
+                    className="w-9 h-9 rounded-full bg-[#F2F2F7] text-gray-600 hover:bg-gray-200 hover:text-gray-900 transition-all flex items-center justify-center active:scale-95"
+                >
+                    <Settings size={18} />
+                </button>
+            </div>
+        </div>
+    </div>
+  );
+
+  const renderSettingsView = () => (
+    <div className="flex flex-col h-full bg-white relative animate-in slide-in-from-right-8 duration-300 ease-out">
+        {/* Settings Form */}
+        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-8 no-scrollbar">
+            
+            {/* Timeframe Section */}
+            <div>
+                <span className="text-[13px] font-semibold text-gray-400 block mb-3 uppercase tracking-wide">Timeframe</span>
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-gray-400 ml-1">Month</label>
+                        <div className="relative">
+                            <select 
+                                className="w-full bg-gray-50 border-none rounded-xl py-2.5 px-3 text-[14px] font-semibold text-gray-900 outline-none focus:ring-2 focus:ring-[#3A5C34]/20 appearance-none cursor-pointer"
+                                value={tempConfig.month}
+                                onChange={e => setTempConfig({...tempConfig, month: parseInt(e.target.value)})}
+                            >
+                                {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                            </select>
+                            <ChevronRight size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-gray-400 ml-1">Year</label>
+                        <input 
+                            type="number"
+                            className="w-full bg-gray-50 border-none rounded-xl py-2.5 px-3 text-[14px] font-semibold text-gray-900 outline-none focus:ring-2 focus:ring-[#3A5C34]/20 placeholder-gray-400"
+                            value={tempConfig.year}
+                            onChange={e => setTempConfig({...tempConfig, year: parseInt(e.target.value)})}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Cadence Section */}
+            <div>
+                <span className="text-[13px] font-semibold text-gray-400 block mb-3 uppercase tracking-wide">Cadence</span>
+                
+                {/* Switcher */}
+                <div className="bg-gray-100 p-1 rounded-xl flex mb-4">
+                    <button 
+                        className={`flex-1 py-1.5 text-[13px] font-semibold rounded-lg transition-all ${tempConfig.logicType === 'frequency' ? 'bg-white text-gray-900 shadow-sm' : 'bg-transparent text-gray-500 hover:text-gray-700'}`}
+                        onClick={() => setTempConfig({...tempConfig, logicType: 'frequency'})}
+                    >
+                        Frequency
+                    </button>
+                    <button 
+                        className={`flex-1 py-1.5 text-[13px] font-semibold rounded-lg transition-all ${tempConfig.logicType === 'count' ? 'bg-white text-gray-900 shadow-sm' : 'bg-transparent text-gray-500 hover:text-gray-700'}`}
+                        onClick={() => setTempConfig({...tempConfig, logicType: 'count'})}
+                    >
+                        Total Count
+                    </button>
+                </div>
+
+                {/* Counter Control */}
+                <div className="flex items-center justify-between p-1">
+                    <span className="text-[15px] font-medium text-gray-700">
+                         {tempConfig.logicType === 'frequency' ? 'Every X Days' : 'Total Posts'}
+                    </span>
+                    <div className="flex items-center gap-3">
+                        <button 
+                            className="w-8 h-8 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
+                            onClick={() => setTempConfig({...tempConfig, value: Math.max(1, tempConfig.value - 1)})}
+                        >
+                            <Minus size={14} strokeWidth={2.5} />
+                        </button>
+                        <span className="w-8 text-center font-bold text-[17px] text-gray-900 tabular-nums">{tempConfig.value}</span>
+                        <button 
+                            className="w-8 h-8 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-100 active:scale-95 transition-all"
+                            onClick={() => setTempConfig({...tempConfig, value: tempConfig.value + 1})}
+                        >
+                            <Plus size={14} strokeWidth={2.5} />
+                        </button>
+                    </div>
+                </div>
+                 <p className="text-[12px] text-gray-400 mt-3 leading-relaxed border-t border-gray-50 pt-3">
+                    {tempConfig.logicType === 'frequency' 
+                        ? `This will automatically create a post slot every ${tempConfig.value} days starting from the 1st.` 
+                        : `This will distribute ${tempConfig.value} post slots evenly across the selected month.`}
+                </p>
+            </div>
+        </div>
+
+        {/* Footer / Action Bar (Identical to Front) */}
+        <div className="mt-auto px-5 py-4 border-t border-gray-100 flex items-center justify-between bg-white shrink-0">
+             {/* Left - Status */}
+             <div className="flex items-center gap-2">
+                 <div className="w-2 h-2 rounded-full bg-[#3A5C34]"></div>
+                 <span className="text-[13px] font-medium text-gray-400">Changes Saved</span>
+             </div>
+
+            {/* Right - Toggle Button (Back) */}
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); handleSaveSettings(); }}
+                    className="w-9 h-9 rounded-full bg-[#F2F2F7] text-gray-600 hover:bg-gray-200 hover:text-gray-900 transition-all flex items-center justify-center active:scale-95"
+                >
+                    <LayoutGrid size={18} />
+                </button>
+            </div>
+        </div>
+    </div>
+  );
+
+  return (
+    <>
+        <BaseCard 
+        {...props} 
+        title={content.title || "Feed Planner"} 
+        // Changed from Blue to Forest Green
+        icon={<LayoutGrid size={16} className="text-[#3A5C34]"/>}
+        >
+        {viewMode === 'grid' ? renderGridView() : renderSettingsView()}
+        </BaseCard>
+
+        {previewPost && (
+            <InstagramPreviewModal 
+                post={previewPost} 
+                onClose={() => setPreviewPostId(null)}
+            />
+        )}
+    </>
+  );
+};

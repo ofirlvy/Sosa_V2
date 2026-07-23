@@ -386,4 +386,206 @@ export const BaseCard: React.FC<BaseCardProps> = ({
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('keydown', handleKey, true);
     };
-  }, [isDragging, card.id, card.x, card.y, card.isLocked, onMove, onDragMove, onDragCommit, zoomScale, onSelect, onDragEnd, onExpand]
+  }, [isDragging, card.id, card.x, card.y, card.isLocked, onMove, onDragMove, onDragCommit, zoomScale, onSelect, onDragEnd, onExpand]);
+
+  const toggleFullscreen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Selecting + expanding ensures the card renders its editor in fullscreen.
+    if (!isFullscreen) {
+      onSelect(card.id, { keepOthers: false });
+      onExpand?.(card.id);
+    }
+    setIsFullscreen(!isFullscreen);
+  };
+
+  const getSelectionStyles = () => {
+    if (isFullscreen) {
+      // Full-bleed white screen for every card (no modal/backdrop/rounded sheet).
+      // Fixed layouts (canvas/Feed Planner) fill the screen exactly as before.
+      return isFixedLayout
+        ? 'relative w-screen h-screen bg-white overflow-hidden flex flex-col'
+        : 'relative w-full min-h-screen bg-white flex flex-col';
+    }
+
+    // ZONE and STROKE manage their own selection visuals (own frame / freeform),
+    // so they get no card chrome here.
+    if (card.type === CardType.ZONE || card.type === CardType.STROKE) {
+      return 'absolute select-none';
+    }
+
+    // Unified "lift" on select + yellow hover ring across ALL card variants, so
+    // images / video / text / sticky feel exactly like a PostCard.
+    const lift = "transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] cursor-grab active:cursor-grabbing";
+    const selectedLift = "shadow-[0_20px_40px_-12px_rgba(58,92,52,0.2)] z-50 scale-[1.005]";
+
+    if (variant === 'minimal') {
+      // `flex flex-col` so the children wrapper's `flex-1` fills the card's height
+      // (with minHeight: card.height) — keeps media exactly card-sized so the
+      // selection box + resize handles line up precisely.
+      const base = `absolute flex flex-col select-none rounded-xl ${lift}`;
+      return isSelected ? `${base} ${selectedLift}` : `${base} z-10 hover:ring-2 hover:ring-[#FFD753]`;
+    }
+
+    if (variant === 'sticky') {
+      const base = `absolute flex flex-col ${lift}`;
+      return isSelected ? `${base} ${selectedLift}` : `${base} shadow-md hover:shadow-lg hover:ring-2 hover:ring-[#FFD753] z-10`;
+    }
+
+    // Default Cards
+    // Using the Vibrant Yellow for hover rings to make it feel active and creative
+    const colors = {
+      [CardType.POST]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.STORY]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.REELS]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.STRATEGY_AI]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.ANALYTICS]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.PERSONA]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.GRID_PLANNER]: { hover: 'hover:ring-[#FFD753]' },
+      [CardType.PINTEREST]: { hover: 'hover:ring-[#FFD753]' }
+    }[card.type] || { hover: 'hover:ring-gray-300' };
+
+    // Transition only visual props (shadow/ring via box-shadow, select scale via
+    // transform) — NOT left/top, so dragged group children move in lockstep with
+    // the zone instead of animating ("chasing") behind it.
+    const base = "flex flex-col bg-white transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] cursor-grab active:cursor-grabbing absolute";
+    
+    if (isSelected) {
+      return `${base} shadow-[0_20px_40px_-12px_rgba(58,92,52,0.2)] z-50 scale-[1.005]`;
+    } else {
+      return `${base} shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] z-10 hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.1)] hover:ring-2 hover:ring-offset-0 ${colors.hover}`;
+    }
+  };
+
+  const cardContent = (
+    <div
+      ref={containerRef}
+      className={`${getSelectionStyles()} ${className}`}
+      style={!isFullscreen ? {
+        left: card.x,
+        top: card.y,
+        width: card.width,
+        // Fixed-box cards (isFixedLayout / fixedHeight media+link) get a DEFINITE
+        // height so inner h-full fills exactly and the bounding box matches the
+        // visible surface. Everything else auto-grows with content (min card.height).
+        height: (isFixedLayout || fixedHeight) ? card.height : 'auto',
+        // Collapsed cards shrink to their compact content (board-overview density).
+        minHeight: (isFixedLayout || fixedHeight || compact) ? undefined : card.height,
+        borderRadius: variant === 'default' ? '24px' : undefined,
+        // Live drag: composited translate (no left/top reflow). 1:1 with the cursor
+        // (no transition) and lifted above other cards while moving.
+        ...(dragOffset ? {
+          transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)`,
+          transition: 'none',
+          zIndex: 9998,
+          willChange: 'transform',
+        } : {}),
+      } : {}}
+      onMouseDown={handleMouseDown}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => {
+        // Double-click = select + expand in one gesture (also from collapsed).
+        if (isFullscreen || card.isLocked) return;
+        e.stopPropagation();
+        onSelect(card.id, { keepOthers: false });
+        onExpand?.(card.id);
+      }}
+      onContextMenu={onContextMenu ? (e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, card.id); } : undefined}
+    >
+      {variant === 'default' && (
+        <div className={`flex items-center justify-between px-5 pt-5 pb-2 select-none shrink-0 ${isFullscreen ? 'sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-gray-100 pb-3' : 'rounded-t-[24px]'}`}>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-gray-400 shrink-0">{icon}</span>
+            <span dir="auto" className={`truncate ${compact ? 'text-[14px] font-bold text-gray-900' : 'text-[13px] font-semibold tracking-tight text-gray-500'}`}>{title}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {headerRight}
+            {isFullscreen && (
+              <span className="hidden sm:inline-block text-[10px] font-semibold text-gray-400 border border-gray-200 rounded-md px-1.5 py-0.5 select-none">Esc</span>
+            )}
+            <button
+              onClick={toggleFullscreen}
+              className="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-gray-400 hover:bg-[#FCCAE2] hover:text-[#5F2427] transition-colors"
+            >
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <FullscreenContext.Provider value={isFullscreen}>
+        <div className={`flex-1 flex flex-col min-h-0 ${card.isLocked ? 'pointer-events-none' : ''} ${isFixedLayout ? 'overflow-hidden rounded-b-[24px]' : (variant === 'default' ? 'px-5 pb-5 overflow-visible' : '')}`}>
+          {children}
+        </div>
+      </FullscreenContext.Provider>
+
+      {isSelected && !isFullscreen && card.isLocked && (
+        <>
+          <div className="absolute inset-0 pointer-events-none border-2 border-dashed border-[#5F2427]/30 z-50 rounded-[inherit]" />
+          {(() => {
+            const combo = card.type === CardType.ZONE ? (LOCK_COMBOS[(card.content as any)?.color] || DEFAULT_LOCK_COMBO) : DEFAULT_LOCK_COMBO;
+            return <LockPill onUnlock={() => onToggleLock?.(card.id)} bg={combo.bg} text={combo.text} />;
+          })()}
+        </>
+      )}
+
+      {isSelected && !isFullscreen && !card.isLocked && card.type !== CardType.STROKE && (
+         <>
+            {/* Bounding Box Border - Using Deep Green for "Selected" state.
+                Zones already have their own colored frame, so skip the extra border. */}
+            {card.type !== CardType.ZONE && (
+              <div className="absolute inset-0 pointer-events-none border border-[#3A5C34] z-50 rounded-[inherit]" />
+            )}
+            
+            {/* Edge Resize Handles */}
+            <div 
+               className="absolute -top-1.5 left-1.5 right-1.5 h-3 z-40 cursor-n-resize pointer-events-auto"
+               onMouseDown={(e) => handleResizeStart(e, 'n')}
+            />
+            <div 
+               className="absolute -bottom-1.5 left-1.5 right-1.5 h-3 z-40 cursor-s-resize pointer-events-auto"
+               onMouseDown={(e) => handleResizeStart(e, 's')}
+            />
+            <div 
+               className="absolute -left-1.5 top-1.5 bottom-1.5 w-3 z-40 cursor-w-resize pointer-events-auto"
+               onMouseDown={(e) => handleResizeStart(e, 'w')}
+            />
+            <div 
+               className="absolute -right-1.5 top-1.5 bottom-1.5 w-3 z-40 cursor-e-resize pointer-events-auto"
+               onMouseDown={(e) => handleResizeStart(e, 'e')}
+            />
+
+            {/* Resize Handles - Using Yellow for interaction points */}
+            <div 
+               className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-[#FFD753] border border-white z-50 cursor-nw-resize pointer-events-auto shadow-sm"
+               onMouseDown={(e) => handleResizeStart(e, 'nw')}
+            />
+            <div 
+               className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-[#FFD753] border border-white z-50 cursor-ne-resize pointer-events-auto shadow-sm"
+               onMouseDown={(e) => handleResizeStart(e, 'ne')}
+            />
+            <div 
+               className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-[#FFD753] border border-white z-50 cursor-sw-resize pointer-events-auto shadow-sm"
+               onMouseDown={(e) => handleResizeStart(e, 'sw')}
+            />
+            <div 
+               className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-[#FFD753] border border-white z-50 cursor-se-resize pointer-events-auto shadow-sm"
+               onMouseDown={(e) => handleResizeStart(e, 'se')}
+            />
+         </>
+      )}
+    </div>
+  );
+
+  if (isFullscreen) {
+    // True full-bleed white screen (NOT a modal) — like opening an item to its
+    // fullscreen editor in Notion. Same treatment the Feed Planner already uses.
+    return createPortal(
+      <div className="fixed inset-0 z-[9999] bg-white overflow-auto animate-in fade-in duration-200">
+        {cardContent}
+      </div>,
+      document.body
+    );
+  }
+
+  return cardContent;
+};

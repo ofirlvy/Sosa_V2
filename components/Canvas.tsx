@@ -755,4 +755,1221 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   };
 
-  cons
+  const handleMouseUp = (e: React.MouseEvent) => {
+    // Trigger drop sound if we were dragging a card
+    if (draggingCardId) {
+      soundService.play('drop');
+    }
+
+    // Finalize Marquee Selection
+    if (selectionBox) {
+        // selectionBox is stored container-local — convert directly to world.
+        const startWorld = localToWorld(selectionBox.start.x, selectionBox.start.y);
+        const endWorld = localToWorld(selectionBox.current.x, selectionBox.current.y);
+        
+        const minX = Math.min(startWorld.x, endWorld.x);
+        const maxX = Math.max(startWorld.x, endWorld.x);
+        const minY = Math.min(startWorld.y, endWorld.y);
+        const maxY = Math.max(startWorld.y, endWorld.y);
+        
+        if (Math.abs(maxX - minX) > 2 || Math.abs(maxY - minY) > 2) {
+             const intersectingIds = cards.filter(c => {
+                const r = effectiveRect(c);
+                return (minX < r.x + r.width && maxX > r.x && minY < r.y + r.height && maxY > r.y);
+            }).map(c => c.id);
+
+            if (e.shiftKey) {
+                const newSet = new Set([...selectedCardIds, ...intersectingIds]);
+                setSelectedCardIds(Array.from(newSet));
+            } else {
+                setSelectedCardIds(intersectingIds);
+            }
+        }
+        setSelectionBox(null);
+    }
+
+    if (isDrawing) {
+        if (activeTool === 'PEN' || activeTool === 'HIGHLIGHTER') {
+            if (currentStroke.length > 2) {
+                const xs = currentStroke.map(p => p.x);
+                const ys = currentStroke.map(p => p.y);
+                const minX = Math.min(...xs);
+                const minY = Math.min(...ys);
+                const maxX = Math.max(...xs);
+                const maxY = Math.max(...ys);
+                const width = maxX - minX;
+                const height = maxY - minY;
+
+                const relativePoints = currentStroke.map(p => ({
+                    x: p.x - minX,
+                    y: p.y - minY,
+                    p: p.p
+                }));
+
+                const newCard: CardData = {
+                    id: `stroke-${Date.now()}`,
+                    type: CardType.STROKE,
+                    x: minX,
+                    y: minY,
+                    width: Math.max(width, 1), 
+                    height: Math.max(height, 1),
+                    zIndex: 50,
+                    content: {
+                        points: relativePoints,
+                        color: activeTool === 'HIGHLIGHTER' ? '#FFE500' : '#1C1C1E',
+                        width: activeTool === 'HIGHLIGHTER' ? 20 : 4,
+                        isHighlighter: activeTool === 'HIGHLIGHTER'
+                    }
+                };
+                onCardsChange([...cards, newCard]);
+            }
+        } else if (activeTool === 'LASSO') {
+            if (lassoPath.length > 2) {
+                const lx = lassoPath.map(p => p.x);
+                const ly = lassoPath.map(p => p.y);
+                const minX = Math.min(...lx);
+                const minY = Math.min(...ly);
+                const maxX = Math.max(...lx);
+                const maxY = Math.max(...ly);
+
+                const hit = cards.filter(c => 
+                    c.x >= minX && c.x + c.width <= maxX &&
+                    c.y >= minY && c.y + c.height <= maxY
+                ).map(c => c.id);
+                
+                if (hit.length > 0) setSelectedCardIds(hit);
+            }
+        }
+    }
+
+    setIsPanning(false);
+    setIsDrawing(false);
+    setCurrentStroke([]);
+    setLassoPath([]);
+    setDraggingCardId(null);
+    setHoveredGridId(null);
+    setHoveredSlotIndex(null);
+  };
+
+  // --- CRUD Handlers ---
+
+  // Compute the full set of card ids that move together with `id`:
+  // the whole selection if `id` is selected (else just `id`), plus ZONE children.
+  const computeMovingIds = (id: string): string[] => {
+    const ids = new Set<string>();
+    if (selectedCardIds.includes(id)) selectedCardIds.forEach(cid => ids.add(cid));
+    else ids.add(id);
+    cardsRef.current.forEach(c => {
+      if (ids.has(c.id) && c.type === CardType.ZONE) {
+        (c.content as ZoneCardContent).childIds?.forEach(cid => ids.add(cid));
+      }
+    });
+    return Array.from(ids);
+  };
+
+  // Live drag move — updates the transient offset (cheap, composited) and applies
+  // magnetic snapping to nearby cards' edges/centers (unless Cmd/Ctrl is held).
+  const handleDragMove = (id: string, dx: number, dy: number) => {
+    if (draggingCardId !== id) setDraggingCardId(id);
+    const ids = dragState && dragState.ids.includes(id) ? dragState.ids : computeMovingIds(id);
+    const movingSet = new Set(ids);
+
+    let snapDx = dx, snapDy = dy;
+    let guides: SnapGuide[] = [];
+    if (!snapDisabledRef.current && !isSpacePressed) {
+      // Bounding box of the moving set at the raw (unsnapped) position.
+      const movingRects = cardsRef.current.filter(c => movingSet.has(c.id)).map(effectiveRect);
+      if (movingRects.length > 0) {
+        const bx = Math.min(...movingRects.map(r => r.x)) + dx;
+        const by = Math.min(...movingRects.map(r => r.y)) + dy;
+        const br = Math.max(...movingRects.map(r => r.x + r.width)) + dx;
+        const bb = Math.max(...movingRects.map(r => r.y + r.height)) + dy;
+        const moving = { x: bx, y: by, width: br - bx, height: bb - by };
+        // Snap against everything not moving and not a freeform stroke.
+        const others = cardsRef.current
+          .filter(c => !movingSet.has(c.id) && c.type !== CardType.STROKE)
+          .map(effectiveRect);
+        const res = computeSnap(moving, others, 8 / scale);
+        snapDx = dx + res.dx;
+        snapDy = dy + res.dy;
+        guides = res.guides;
+      }
+    }
+    setSnapGuides(guides);
+    setDragState(prev =>
+      prev && prev.ids.includes(id) ? { ...prev, dx: snapDx, dy: snapDy } : { ids, dx: snapDx, dy: snapDy }
+    );
+  };
+
+  // Apply a moving card's drop into/out of a ZONE (membership + refit), operating
+  // on a passed array so it composes with the position commit in one update.
+  const withZoneMembership = (arr: CardData[], id: string): CardData[] => {
+    const card = arr.find(c => c.id === id);
+    if (!card || card.type === CardType.ZONE) return arr;
+    const cardRect = effectiveRect(card);
+    const cx = cardRect.x + cardRect.width / 2;
+    const cy = cardRect.y + cardRect.height / 2;
+    const targetZone = arr.find(z => z.type === CardType.ZONE &&
+      cx >= z.x && cx <= z.x + z.width && cy >= z.y && cy <= z.y + z.height);
+    // Is this a NEW membership (card wasn't already in the target zone)?
+    const wasInTarget = targetZone
+      ? ((targetZone.content as ZoneCardContent).childIds || []).includes(id)
+      : false;
+
+    let next = arr.map(c => {
+      if (c.type !== CardType.ZONE) return c;
+      const zc = c.content as ZoneCardContent;
+      const childIds: string[] = zc.childIds || [];
+      const has = childIds.includes(id);
+      if (targetZone && c.id === targetZone.id) {
+        if (!has) return { ...c, content: { ...zc, childIds: [...childIds, id] } };
+      } else if (has) {
+        return { ...c, content: { ...zc, childIds: childIds.filter(x => x !== id) } };
+      }
+      return c;
+    });
+
+    // "Magic" placement: a card newly dropped into a zone that overlaps an
+    // existing member is nudged to the nearest free slot (right of the row it
+    // landed on, else a new row) so it never lands on top of another card.
+    if (targetZone && !wasInTarget) {
+      const siblings = ((targetZone.content as ZoneCardContent).childIds || [])
+        .filter(cid => cid !== id)
+        .map(cid => next.find(c => c.id === cid))
+        .filter(Boolean) as CardData[];
+      const me = next.find(c => c.id === id)!;
+      const meRect = effectiveRect(me);
+      const overlaps = (a: Rect, b: Rect) =>
+        a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+      const GAP = 24;
+      let placed = { x: me.x, y: me.y };
+      const collides = () => siblings.some(s => {
+        const sr = effectiveRect(s);
+        return overlaps({ ...meRect, x: placed.x, y: placed.y }, sr);
+      });
+      if (collides()) {
+        // Slide right past the sibling row that contains the drop point.
+        const rowSibs = siblings
+          .map(effectiveRect)
+          .filter(sr => placed.y + meRect.height > sr.y && placed.y < sr.y + sr.height);
+        const rightEdge = rowSibs.length ? Math.max(...rowSibs.map(sr => sr.x + sr.width)) : null;
+        if (rightEdge != null) placed = { x: rightEdge + GAP, y: placed.y };
+        // Still colliding → drop to a new row below everything.
+        if (collides()) {
+          const bottom = Math.max(...siblings.map(s => { const sr = effectiveRect(s); return sr.y + sr.height; }));
+          placed = { x: placed.x, y: bottom + GAP };
+        }
+        next = next.map(c => c.id === id ? { ...c, x: placed.x, y: placed.y } : c);
+      }
+    }
+
+    next = next.map(c => {
+      if (c.type !== CardType.ZONE) return c;
+      const fit = fitZoneToChildren(c, next);
+      return fit ? { ...c, ...fit } : c;
+    });
+    return next;
+  };
+
+  // When a zone child's RENDERED size changes (expand/collapse, media load, text
+  // growth) refit the owning zone frame silently so it keeps hugging its contents.
+  // Guarded by a >1px delta to avoid save loops.
+  useEffect(() => {
+    if (!dragStateRef.current) {
+      const zones = cardsRef.current.filter(c => c.type === CardType.ZONE);
+      if (zones.length === 0) return;
+      let changed = false;
+      const next = cardsRef.current.map(c => {
+        if (c.type !== CardType.ZONE) return c;
+        const fit = fitZoneToChildren(c, cardsRef.current);
+        if (fit && (Math.abs(fit.x - c.x) > 1 || Math.abs(fit.y - c.y) > 1 ||
+                    Math.abs(fit.width - c.width) > 1 || Math.abs(fit.height - c.height) > 1)) {
+          changed = true;
+          return { ...c, ...fit };
+        }
+        return c;
+      });
+      if (changed) (onCardsChangeSilent || onCardsChange)(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measureVersion]);
+
+  // Escape mid-drag: throw away the pending offset so the cards snap back to
+  // where they started. Nothing is written, so an accidental drag across a
+  // carefully arranged board costs nothing.
+  const handleDragCancel = useCallback(() => {
+    setDragState(null);
+    setDraggingCardId(null);
+    setSnapGuides([]);
+  }, []);
+
+  // Drop — commit the accumulated offset to real x/y in a SINGLE update (one
+  // history entry + one save), then resolve zone membership for single-card drags.
+  const handleDragCommit = (id: string) => {
+    const ds = dragStateRef.current;
+    setDragState(null);
+    setDraggingCardId(null);
+    setSnapGuides([]);
+    if (!ds || (ds.dx === 0 && ds.dy === 0)) return;
+    const movingSet = new Set(ds.ids);
+    let moved = cardsRef.current.map(c => movingSet.has(c.id) ? { ...c, x: c.x + ds.dx, y: c.y + ds.dy } : c);
+    if (selectedCardIds.length <= 1) moved = withZoneMembership(moved, id);
+    onCardsChange(moved);
+  };
+
+  // Direct single-card move (fallback for the non-transform path; rarely used now).
+  const moveCardAbsolute = (id: string, x: number, y: number) => {
+    onCardsChange(cardsRef.current.map(c => c.id === id ? { ...c, x, y } : c));
+  };
+
+  // Quick-add a card AT the right-click point (from the context-menu tools row).
+  const addCardAtPoint = (type: CardType) => {
+    if (!contextMenu) return;
+    const world = screenToWorld(contextMenu.x, contextMenu.y);
+    const size = TOOL_DEFAULT_SIZE[type] || { w: 340, h: 400 };
+    const maxZ = cardsRef.current.reduce((m, c) => Math.max(m, c.zIndex || 1), 0);
+    const newCard: CardData = {
+      id: `card-${Date.now()}-${Math.round(Math.random() * 1e4)}`,
+      type,
+      x: world.x - size.w / 2,
+      y: world.y - size.h / 2,
+      width: size.w,
+      height: size.h,
+      zIndex: maxZ + 1,
+      content: {} as any, // each card initializes its own defaults from empty content (same as the drawer)
+    };
+    onCardsChange([...cardsRef.current, newCard]);
+    setSelectedCardIds([newCard.id]);
+    soundService.play('drop');
+    onQuickToolUsed?.(type);
+    setContextMenu(null);
+  };
+
+  const updateCardGeometry = (id: string, geometry: { width?: number, height?: number, x?: number, y?: number }) => {
+    onCardsChange(cards.map(c => c.id === id ? { ...c, ...geometry } : c));
+  };
+  
+  const updateCardContent = (id: string, content: any) => {
+    onCardsChange(cards.map(c => c.id === id ? { ...c, content } : c));
+  };
+
+  const handleDeleteCard = (id: string) => {
+    if (selectedCardIds.includes(id)) {
+        onCardsChange(cards.filter(c => !selectedCardIds.includes(c.id)));
+        setSelectedCardIds([]);
+    } else {
+        onCardsChange(cards.filter(c => c.id !== id));
+        if (selectedCardIds.includes(id)) {
+            setSelectedCardIds(prev => prev.filter(cid => cid !== id));
+        }
+    }
+  };
+
+  const handleGroup = (color: string) => {
+      if (!groupBounds) return;
+      const newZoneId = Date.now().toString();
+      const newZone: CardData = {
+          id: newZoneId,
+          type: CardType.ZONE,
+          x: groupBounds.x - 20,
+          y: groupBounds.y - 20,
+          width: groupBounds.width + 40,
+          height: groupBounds.height + 40,
+          zIndex: Math.min(...cards.filter(c => selectedCardIds.includes(c.id)).map(c => c.zIndex)) - 1, // Place behind
+          content: {
+              title: 'Untitled Group',
+              color,
+              childIds: [...selectedCardIds]
+          }
+      };
+      onCardsChange([...cards, newZone]);
+      setSelectedCardIds([newZoneId]);
+  };
+
+  const handleUngroup = (zoneId: string) => {
+      onCardsChange(cards.filter(c => c.id !== zoneId));
+      setSelectedCardIds([]);
+  };
+
+  const handleAlign = (alignment: string) => {
+      if (!groupBounds || selectedCardIds.length < 2) return;
+      const selectedCards = cards.filter(c => selectedCardIds.includes(c.id));
+      
+      let newCards = [...cards];
+      
+      if (alignment === 'left') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, x: groupBounds.x } : c);
+      } else if (alignment === 'center') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, x: groupBounds.x + groupBounds.width / 2 - c.width / 2 } : c);
+      } else if (alignment === 'right') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, x: groupBounds.x + groupBounds.width - c.width } : c);
+      } else if (alignment === 'top') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, y: groupBounds.y } : c);
+      } else if (alignment === 'middle') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, y: groupBounds.y + groupBounds.height / 2 - c.height / 2 } : c);
+      } else if (alignment === 'bottom') {
+          newCards = newCards.map(c => selectedCardIds.includes(c.id) ? { ...c, y: groupBounds.y + groupBounds.height - c.height } : c);
+      } else if (alignment === 'distribute-h') {
+          const sorted = [...selectedCards].sort((a, b) => a.x - b.x);
+          const totalWidth = sorted.reduce((sum, c) => sum + c.width, 0);
+          const gap = (groupBounds.width - totalWidth) / (sorted.length - 1);
+          let currentX = groupBounds.x;
+          sorted.forEach(c => {
+              newCards = newCards.map(nc => nc.id === c.id ? { ...nc, x: currentX } : nc);
+              currentX += c.width + gap;
+          });
+      } else if (alignment === 'distribute-v') {
+          const sorted = [...selectedCards].sort((a, b) => a.y - b.y);
+          const totalHeight = sorted.reduce((sum, c) => sum + c.height, 0);
+          const gap = (groupBounds.height - totalHeight) / (sorted.length - 1);
+          let currentY = groupBounds.y;
+          sorted.forEach(c => {
+              newCards = newCards.map(nc => nc.id === c.id ? { ...nc, y: currentY } : nc);
+              currentY += c.height + gap;
+          });
+      }
+      
+      onCardsChange(newCards);
+  };
+
+  // Copy the current selection (expands zones to their children + captures internal
+  // connectors) into both the in-memory clipboard and the system clipboard.
+  const copyCurrentSelection = () => {
+    if (selectedCardIds.length === 0) return null;
+    const clip = copySelection(cards, selectedCardIds, connectors);
+    try { navigator.clipboard?.writeText(serializeClipboard(clip)); } catch { /* best effort */ }
+    return clip;
+  };
+
+  // Insert a materialized clipboard at a free spot near a world point; selects the
+  // pasted cards. Cards are added BEFORE connectors so connector pruning in
+  // writeCards sees the new cards.
+  const insertClipboard = (clip: ReturnType<typeof getInternalClipboard>, worldPoint: Position) => {
+    if (!clip || clip.cards.length === 0) return;
+    const bounds = clipboardBounds(clip);
+    const obstacles = cardsRef.current.map(effectiveRect);
+    const spot = findFreeSpot(bounds, obstacles, { x: worldPoint.x - bounds.width / 2, y: worldPoint.y - bounds.height / 2 });
+    const maxZ = cardsRef.current.reduce((m, c) => Math.max(m, c.zIndex || 1), 0);
+    const { cards: newCards, connectors: newConnectors } = materializePaste(clip, spot, maxZ);
+    onCardsChange([...cardsRef.current, ...newCards]);
+    if (newConnectors.length > 0 && onConnectorsChange) onConnectorsChange([...connectors, ...newConnectors]);
+    setSelectedCardIds(newCards.map(c => c.id));
+    soundService.play('drop');
+  };
+
+  // Duplicate in place (offset), reusing the copy/materialize machinery so zones
+  // duplicate WITH their children (and remapped childIds — fixes the shared-id bug)
+  // and internal connectors come along.
+  const handleDuplicateSelection = () => {
+      if (selectedCardIds.length === 0) return;
+      const clip = copySelection(cards, selectedCardIds, connectors);
+      const bounds = clipboardBounds(clip);
+      const maxZ = cards.reduce((m, c) => Math.max(m, c.zIndex || 1), 0);
+      const { cards: newCards, connectors: newConnectors } = materializePaste(clip, { x: bounds.x + 24, y: bounds.y + 24 }, maxZ);
+      onCardsChange([...cards, ...newCards]);
+      if (newConnectors.length > 0 && onConnectorsChange) onConnectorsChange([...connectors, ...newConnectors]);
+      setSelectedCardIds(newCards.map(c => c.id));
+  };
+
+  const handleLockToggle = () => {
+      const sel = cards.filter(c => selectedCardIds.includes(c.id));
+      const allLocked = sel.every(c => c.isLocked);
+      // Locking a zone cascades to its children so the whole group locks together.
+      const ids = new Set(selectedCardIds);
+      sel.forEach(c => {
+          if (c.type === CardType.ZONE) (c.content as ZoneCardContent).childIds?.forEach(id => ids.add(id));
+      });
+      onCardsChange(cards.map(c => ids.has(c.id) ? { ...c, isLocked: !allLocked } : c));
+  };
+
+  // Toggle lock for a whole group given ANY member id (used by the unlock pill):
+  // a zone → its children; a child → its owning zone + all its children.
+  const handleToggleLockById = (id: string) => {
+      const target = cards.find(c => c.id === id);
+      if (!target) return;
+      const newLocked = !target.isLocked;
+      const ids = new Set<string>([id]);
+      if (target.type === CardType.ZONE) (target.content as ZoneCardContent).childIds?.forEach(c => ids.add(c));
+      const owningZone = cards.find(z => z.type === CardType.ZONE && (z.content as ZoneCardContent).childIds?.includes(id));
+      if (owningZone) { ids.add(owningZone.id); (owningZone.content as ZoneCardContent).childIds?.forEach(c => ids.add(c)); }
+      onCardsChange(cards.map(c => ids.has(c.id) ? { ...c, isLocked: newLocked } : c));
+  };
+
+  const handleDeleteSelection = () => {
+      onCardsChange(cards.filter(c => !selectedCardIds.includes(c.id)));
+      setSelectedCardIds([]);
+      setContextMenu(null);
+  };
+
+  // Pin/unpin a content card as "keep expanded" (never auto-collapses).
+  const handleToggleAlwaysExpanded = (id: string) => {
+      onCardsChange(cards.map(c => c.id === id ? { ...c, alwaysExpanded: !c.alwaysExpanded } : c));
+  };
+
+  const handleSendToBack = () => {
+      const minZ = Math.min(...cards.map(c => c.zIndex || 1));
+      onCardsChange(cards.map(c => selectedCardIds.includes(c.id) ? { ...c, zIndex: minZ - 1 } : c));
+  };
+
+  const handleBringSelectionToFront = () => {
+      const maxZ = Math.max(...cards.map(c => c.zIndex || 1));
+      onCardsChange(cards.map(c => selectedCardIds.includes(c.id) ? { ...c, zIndex: maxZ + 1 } : c));
+  };
+
+  // --- Right-click context menu ---
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const handleCardContextMenu = (e: React.MouseEvent, id: string) => {
+      setSelectedCardIds(prev => prev.includes(id) ? prev : [id]);
+      setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  // Bounding box of a zone's children + padding (room for the name tag on top).
+  const fitZoneToChildren = (zone: CardData, all: CardData[]): { x: number; y: number; width: number; height: number } | null => {
+      const zc = zone.content as ZoneCardContent;
+      const children = (zc.childIds || []).map(id => all.find(c => c.id === id)).filter(Boolean) as CardData[];
+      if (children.length === 0) return null;
+      const PADDING = 28;
+      const TOP = 44;
+      // Measured rects: media/content cards render taller than card.height —
+      // the frame must wrap what's actually on screen.
+      const rects = children.map(effectiveRect);
+      const minX = Math.min(...rects.map(r => r.x));
+      const minY = Math.min(...rects.map(r => r.y));
+      const maxX = Math.max(...rects.map(r => r.x + r.width));
+      const maxY = Math.max(...rects.map(r => r.y + r.height));
+      return { x: minX - PADDING, y: minY - TOP, width: (maxX - minX) + PADDING * 2, height: (maxY - minY) + TOP + PADDING };
+  };
+
+  // After dragging a single card: (un)assign it to a zone by its center, then
+  // refit every zone to its children so the frame tracks the layout.
+  // Auto-arrange a zone's children into a tidy grid, then fit the zone to them.
+  const handleTidyZone = (zoneId: string) => {
+      const zone = cards.find(c => c.id === zoneId);
+      if (!zone) return;
+      const zc = zone.content as ZoneCardContent;
+      const children = (zc.childIds || []).map(id => cards.find(c => c.id === id)).filter(Boolean) as CardData[];
+      if (children.length === 0) return;
+      const PADDING = 28;
+      const TOP = 44; // room below the name tag
+      const GAP = 24;
+      const cols = Math.ceil(Math.sqrt(children.length));
+      const rows = Math.ceil(children.length / cols);
+      const cellW = Math.max(...children.map(c => c.width));
+      const cellH = Math.max(...children.map(c => c.height));
+      const startX = zone.x + PADDING;
+      const startY = zone.y + TOP;
+      const pos = new Map<string, { x: number; y: number }>();
+      children.forEach((c, i) => {
+          pos.set(c.id, { x: startX + (i % cols) * (cellW + GAP), y: startY + Math.floor(i / cols) * (cellH + GAP) });
+      });
+      const newW = PADDING * 2 + cols * cellW + (cols - 1) * GAP;
+      const newH = TOP + PADDING + rows * cellH + (rows - 1) * GAP;
+      onCardsChange(cards.map(c => {
+          if (c.id === zoneId) return { ...c, width: newW, height: newH };
+          const p = pos.get(c.id);
+          return p ? { ...c, x: p.x, y: p.y } : c;
+      }));
+      setContextMenu(null);
+  };
+
+  const bringToFront = (id: string, options?: { toggle?: boolean, keepOthers?: boolean }) => {
+    handleSelectionAction(id, options);
+    const maxZ = Math.max(...cards.map(c => c.zIndex || 1));
+    const target = cards.find(c => c.id === id);
+    // Skip the write entirely if the card is already on top — avoids a needless
+    // save on every click. Otherwise bump z-index SILENTLY (not an undo step).
+    if (target && (target.zIndex || 1) >= maxZ) return;
+    const applyZ = onCardsChangeSilent || onCardsChange;
+    applyZ(cards.map(c => c.id === id ? { ...c, zIndex: maxZ + 1 } : c));
+  };
+
+  // --- GRID PLANNER LINKING HANDLERS ---
+
+  const handleLinkPost = (gridId: string, slotIndex: number, postId: string) => {
+      const newCards = cards.map(c => {
+          if (c.id === gridId) {
+             const content = c.content as GridPlannerContent;
+             const newConnections = { ...content.connections, [slotIndex]: postId };
+             return { ...c, content: { ...content, connections: newConnections } };
+          }
+          return c;
+      });
+      onCardsChange(newCards);
+  };
+
+  const handleUnlink = (gridId: string, slotIndex: number, _postId: string) => {
+      const newCards = cards.map(c => {
+          if (c.id === gridId) {
+             const content = c.content as GridPlannerContent;
+             const newConnections = { ...content.connections };
+             delete newConnections[slotIndex];
+             return { ...c, content: { ...content, connections: newConnections } };
+          }
+          return c;
+      });
+      onCardsChange(newCards);
+  };
+
+  const handleSwapSlots = (gridId: string, slotA: number, slotB: number) => {
+      const newCards = cards.map(c => {
+          if (c.id === gridId) {
+             const content = c.content as GridPlannerContent;
+             const connections = { ...content.connections };
+             
+             const postA = connections[slotA];
+             const postB = connections[slotB];
+
+             if (postB) connections[slotA] = postB; else delete connections[slotA];
+             if (postA) connections[slotB] = postA; else delete connections[slotB];
+
+             return { ...c, content: { ...content, connections } };
+          }
+          return c;
+      });
+      onCardsChange(newCards);
+  };
+
+  // --- Keyboard Shortcuts ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      // What a key means is decided by a pure function (services/boardKeys) so the
+      // rules — especially "never act while typing" — are unit-tested.
+      const action = resolveBoardKey(e, {
+        typing: ['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable,
+        // While a card is fullscreen it owns its keys (Delete would remove the very
+        // card being edited; Escape closes it).
+        fullscreen: !!fullscreenCardIdRef.current,
+        selectedCount: selectedCardIds.length,
+        expanded: !!expandedCardId,
+      });
+      if (!action) return;
+
+      switch (action.kind) {
+        case 'delete':
+          onCardsChange(cards.filter(c => !selectedCardIds.includes(c.id)));
+          setSelectedCardIds([]);
+          break;
+        case 'collapse':
+          // Close the editor but KEEP the card selected — Escape peels one layer.
+          setExpandedCardId(null);
+          break;
+        case 'deselect':
+          setSelectedCardIds([]);
+          setSelectionBox(null);
+          setIsDrawing(false);
+          setContextMenu(null);
+          break;
+        case 'open':
+          setExpandedCardId(selectedCardIds[0]);
+          break;
+        case 'selectAll':
+          e.preventDefault();
+          setSelectedCardIds(cards.map(c => c.id));
+          break;
+        case 'copy':
+          copyCurrentSelection();
+          break;
+        case 'cut':
+          copyCurrentSelection();
+          onCardsChange(cards.filter(c => !selectedCardIds.includes(c.id)));
+          setSelectedCardIds([]);
+          break;
+        case 'duplicate':
+          e.preventDefault(); // Cmd+D is "bookmark" in the browser
+          handleDuplicateSelection();
+          break;
+        case 'nudge': {
+          e.preventDefault(); // arrows would scroll the page
+          const next = nudgeCards(cards, selectedCardIds, action.dx, action.dy);
+          if (next !== cards) onCardsChange(next);
+          break;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCardIds, cards, connectors, expandedCardId]);
+
+  const isPostLinked = (postId: string) => {
+    return cards.some(c => 
+      c.type === CardType.GRID_PLANNER && 
+      Object.values((c.content as GridPlannerContent).connections || {}).includes(postId)
+    );
+  };
+
+  // Synced date from a Grid connection (shared slot↔date logic).
+  const getLinkedDate = (postId: string): Date | null => {
+    const linked = findLinkedGrid(cards, postId);
+    if (!linked) return null;
+    return getSlotDate(linked.grid.content as GridPlannerContent, linked.slotIndex);
+  };
+
+  const renderCard = (card: CardData) => {
+    const commonProps = {
+      card,
+      isSelected: selectedCardIds.includes(card.id),
+      onSelect: bringToFront,
+      onMove: moveCardAbsolute,
+      onDragMove: handleDragMove,
+      onDragCommit: handleDragCommit,
+      dragOffset: dragState && dragState.ids.includes(card.id)
+        ? { x: dragState.dx, y: dragState.dy }
+        : undefined,
+      onDelete: handleDeleteCard,
+      onUpdateContent: updateCardContent,
+      onResize: updateCardGeometry,
+      onContextMenu: handleCardContextMenu,
+      onToggleLock: handleToggleLockById,
+      isMultiSelect: selectedCardIds.length > 1,
+      zoomScale: scale,
+      isExpanded: expandedCardId === card.id,
+      onExpand: handleExpand,
+      onDragCancel: handleDragCancel,
+      isFullscreen: fullscreenCardId === card.id,
+      onFullscreenChange: handleFullscreenChange,
+      onOpenComments
+    };
+
+    const cardElement = (() => { switch (card.type) {
+      case CardType.POST:
+        return (
+            <PostCard 
+                key={card.id}
+                {...commonProps} 
+                isLinked={isPostLinked(card.id)} 
+                linkedDate={getLinkedDate(card.id) || undefined}
+            />
+        );
+      case CardType.STRATEGY_AI:
+        return <AiStrategyCard key={card.id} {...commonProps} />;
+      case CardType.ANALYTICS:
+        return <AnalyticsCard key={card.id} {...commonProps} />;
+      case CardType.GRID_PLANNER:
+        return (
+          <GridPlannerCard 
+            key={card.id}
+            {...commonProps} 
+            allCards={cards}
+            onUnlink={handleUnlink} 
+            onLinkPost={handleLinkPost} 
+            onSwapSlots={handleSwapSlots}
+            hoveredSlotIndex={null}
+          />
+        );
+      case CardType.PINTEREST:
+        return <PinterestCard key={card.id} {...commonProps} />;
+      case CardType.TEXT:
+        return <TextCard key={card.id} {...commonProps} />;
+      case CardType.STICKY:
+        return <StickyCard key={card.id} {...commonProps} />;
+      case CardType.STROKE:
+        return <StrokeCard key={card.id} {...commonProps} />;
+      case CardType.LINK:
+        return <LinkCard key={card.id} {...commonProps} />;
+      case CardType.IMAGE:
+        return <ImageCard key={card.id} {...commonProps} />;
+      case CardType.GANTT:
+        return <GanttCard key={card.id} {...commonProps} />;
+      case CardType.ADS_TEST:
+        return <AdsTestCard key={card.id} {...commonProps} />;
+      case CardType.NEWSLETTER:
+        return <NewsletterCard key={card.id} {...commonProps} />;
+      case CardType.REFERENCE:
+        return <ReferenceCard key={card.id} {...commonProps} />;
+      case CardType.DOC:
+        return <DocCard key={card.id} {...commonProps} />;
+        
+      // --- PRODUCTION SUITE ---
+      case CardType.FILMSTRIP:
+        return <FilmstripCard key={card.id} {...commonProps} />;
+      case CardType.AV_SCRIPT:
+        return <AvScriptCard key={card.id} {...commonProps} />;
+      case CardType.CALL_SHEET:
+        return <CallSheetCard key={card.id} {...commonProps} />;
+      case CardType.CASTING_BOARD:
+        return <CastingBoardCard key={card.id} {...commonProps} />;
+      case CardType.PROP_TABLE:
+        return <PropTableCard key={card.id} {...commonProps} />;
+        
+      case CardType.STORY:
+        return <StoryCard key={card.id} {...commonProps} />;
+
+      case CardType.REELS:
+        return (
+            <ReelsCard
+                key={card.id}
+                {...commonProps}
+                isLinked={isPostLinked(card.id)}
+                linkedDate={getLinkedDate(card.id) || undefined}
+            />
+        );
+
+      case CardType.ZONE:
+        return <ZoneCard key={card.id} {...commonProps} />;
+        
+      default:
+        return <PostCard key={card.id} {...commonProps} />;
+    } })();
+
+    return <CardErrorBoundary key={card.id}>{cardElement}</CardErrorBoundary>;
+  };
+
+  const groupBounds = useMemo(() => {
+      if (selectedCardIds.length <= 1) return null;
+      const selectedCards = cards.filter(c => selectedCardIds.includes(c.id));
+      if (selectedCards.length === 0) return null;
+
+      const rects = selectedCards.map(effectiveRect);
+      const minX = Math.min(...rects.map(r => r.x));
+      const minY = Math.min(...rects.map(r => r.y));
+      const maxX = Math.max(...rects.map(r => r.x + r.width));
+      const maxY = Math.max(...rects.map(r => r.y + r.height));
+
+      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+      // measureVersion: recompute when a selected card's rendered size changes.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCardIds, cards, measureVersion]);
+
+  const isPanMode = isSpacePressed || activeTool === 'PAN' || isPanning;
+
+  // --- DRAG FILES FROM THE COMPUTER ONTO THE BOARD ---
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+
+  const handleCanvasDragOver = (e: React.DragEvent) => {
+    const types = Array.from(e.dataTransfer.types);
+    // Files from the computer, OR links/images dragged from another browser tab
+    // (e.g. a Pinterest pin) — both are droppable.
+    if (!types.includes('Files') && !types.includes('text/uri-list') && !types.includes('text/html')) return;
+    e.preventDefault();
+    setIsFileDragOver(true);
+  };
+
+  // First usable URL from a cross-tab drag: uri-list line, else <img src> / <a href>
+  // out of the dragged HTML fragment.
+  const urlFromDrag = (dt: DataTransfer): string | null => {
+    const uri = (dt.getData('text/uri-list') || '').split('\n').find(l => l && !l.startsWith('#'))?.trim();
+    if (uri && isValidUrl(uri)) return uri;
+    const html = dt.getData('text/html');
+    if (html) {
+      const img = html.match(/<img[^>]+src="([^"]+)"/i)?.[1];
+      if (img && isValidUrl(img)) return img;
+      const a = html.match(/<a[^>]+href="([^"]+)"/i)?.[1];
+      if (a && isValidUrl(a)) return a;
+    }
+    const plain = (dt.getData('text/plain') || '').trim();
+    return plain && isValidUrl(plain) ? plain : null;
+  };
+
+  const handleCanvasDrop = async (e: React.DragEvent) => {
+    const files = Array.from(e.dataTransfer.files || []).filter(
+      f => f.type.startsWith('image/') || f.type.startsWith('video/')
+    );
+    if (files.length === 0) {
+      // No files → maybe a link/image dragged from another tab (Pinterest pin etc.)
+      const url = urlFromDrag(e.dataTransfer);
+      setIsFileDragOver(false);
+      if (!url) return;
+      e.preventDefault();
+      const newCard = cardForUrl(url, screenToWorld(e.clientX, e.clientY));
+      onCardsChange([...cardsRef.current, newCard]);
+      setSelectedCardIds([newCard.id]);
+      soundService.play('drop');
+      return;
+    }
+    e.preventDefault();
+    setIsFileDragOver(false);
+    // Optimistic + auto-tiled: all files paste at once and lay out without overlap.
+    addMediaFiles(files, screenToWorld(e.clientX, e.clientY));
+  };
+
+  // --- Connector render helpers ---
+  // Rect for an element, including any live drag offset so arrows follow during a drag.
+  const rectFor = (c: CardData): Rect => {
+    const moving = dragState && dragState.ids.includes(c.id);
+    const r = effectiveRect(c);
+    return { x: r.x + (moving ? dragState!.dx : 0), y: r.y + (moving ? dragState!.dy : 0), width: r.width, height: r.height };
+  };
+  const rectById = (id: string): Rect | null => { const c = cards.find(x => x.id === id); return c ? rectFor(c) : null; };
+
+  const worldCursor = screenToWorld(cursorPos.x, cursorPos.y);
+  const hoverDotsCardId = (!readOnly && showConnectors && activeTool === 'SELECT' && !isPanning && !dragState && !connectFrom && !selectionBox && selectedCardIds.length === 0)
+    ? elementAtWorld(worldCursor.x, worldCursor.y)
+    : null;
+
+  const selectedConnector = connectors.find(c => c.id === selectedConnectorId) || null;
+  const connectorToolbarPos = (() => {
+    if (!selectedConnector) return null;
+    const a = rectById(selectedConnector.from), b = rectById(selectedConnector.to);
+    if (!a || !b) return null;
+    const an = anchors(a, b); const m = midPoint(an.from, an.to);
+    return { left: m.x * scale + pan.x, top: m.y * scale + pan.y - 46 };
+  })();
+
+  // Edge-midpoint connect dots for the hovered element (constant screen size).
+  const connectDots = (rect: Rect, fromId: string) => {
+    const r = 6 / scale, sw = 2 / scale;
+    const pts = [
+      { x: rect.x + rect.width / 2, y: rect.y },                 // top
+      { x: rect.x + rect.width, y: rect.y + rect.height / 2 },   // right
+      { x: rect.x + rect.width / 2, y: rect.y + rect.height },   // bottom
+      { x: rect.x, y: rect.y + rect.height / 2 },                // left
+    ];
+    return pts.map((p, i) => (
+      <circle
+        key={i} cx={p.x} cy={p.y} r={r}
+        fill="#fff" stroke="#3A5C34" strokeWidth={sw}
+        style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
+        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setSelectedConnectorId(null); setConnectTarget(null); setConnectCursor(worldCursor); setConnectFrom(fromId); }}
+      />
+    ));
+  };
+
+  return (
+    // Changed bg from #f3f4f6 to #F9F8F6 (Warm Stone)
+    <div 
+      ref={containerRef}
+      className={`w-full h-full bg-[#F9F8F6] relative overflow-hidden ${isPanMode ? 'cursor-grab active:cursor-grabbing' : (activeTool === 'SELECT' ? 'cursor-default' : 'cursor-crosshair')}`}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onContextMenu={readOnly ? (e) => e.preventDefault() : (e) => { e.preventDefault(); setSelectedCardIds([]); setContextMenu({ x: e.clientX, y: e.clientY }); }}
+      onDragOver={readOnly ? undefined : handleCanvasDragOver}
+      onDragLeave={readOnly ? undefined : (e) => { if (e.currentTarget === e.target) setIsFileDragOver(false); }}
+      onDrop={readOnly ? undefined : handleCanvasDrop}
+    >
+      {isFileDragOver && (
+        <div className="absolute inset-3 z-[150] pointer-events-none rounded-3xl border-2 border-dashed border-[#3A5C34] bg-[#3A5C34]/5 flex items-center justify-center">
+          <span className="px-4 py-2 rounded-full bg-white shadow-md text-[13px] font-semibold text-[#3A5C34]">Drop image or video to add</span>
+        </div>
+      )}
+      {gridLayers.map((layer) => (
+        <div 
+          key={layer.key}
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundSize: `${layer.spacing}px ${layer.spacing}px`,
+            backgroundPosition: `${pan.x}px ${pan.y}px`,
+            // Changed radial gradient from gray to burgundy for brand consistency
+            backgroundImage: `radial-gradient(circle, rgba(95, 36, 39, ${layer.opacity}) 1.5px, transparent 1.5px)`,
+            opacity: 1 
+          }}
+        />
+      ))}
+
+      {/* Connector lines — BELOW cards (Miro-style). pointer-events only on hit paths. */}
+      {showConnectors && connectors.length > 0 && (
+        <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 5, overflow: 'visible', pointerEvents: 'none' }}>
+          <defs>
+            <marker id="conn-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+            </marker>
+          </defs>
+          <g transform={`translate(${pan.x} ${pan.y}) scale(${scale})`}>
+            {connectors.map(conn => {
+              const a = rectById(conn.from), b = rectById(conn.to);
+              if (!a || !b) return null;
+              const an = anchors(a, b);
+              const d = connectorPath(conn.routing, an.from, an.to);
+              const color = conn.color || DEFAULT_CONNECTOR_COLOR;
+              const w = conn.width || 2;
+              const isSel = conn.id === selectedConnectorId;
+              const mid = midPoint(an.from, an.to);
+              const labelW = (conn.label?.length || 0) * 6.6 + 14;
+              return (
+                <g key={conn.id}>
+                  {/* fat invisible hit area */}
+                  <path d={d} fill="none" stroke="transparent" strokeWidth={16} style={{ pointerEvents: readOnly ? 'none' : 'stroke', cursor: 'pointer' }}
+                    onMouseDown={(e) => { e.stopPropagation(); setSelectedCardIds([]); setSelectedConnectorId(conn.id); }}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedCardIds([]); setSelectedConnectorId(conn.id); }} />
+                  {isSel && <path d={d} fill="none" stroke="#FFD753" strokeWidth={w + 4} strokeLinecap="round" opacity={0.6} style={{ pointerEvents: 'none' }} />}
+                  <path d={d} fill="none" stroke={color} strokeWidth={w} strokeLinecap="round"
+                    strokeDasharray={dashArrayFor(conn.lineStyle)}
+                    markerStart={conn.arrowStart ? 'url(#conn-arrow)' : undefined}
+                    markerEnd={conn.arrowEnd === false ? undefined : 'url(#conn-arrow)'}
+                    style={{ pointerEvents: 'none' }} />
+                  {conn.label && (
+                    <g transform={`translate(${mid.x} ${mid.y})`} style={{ pointerEvents: 'none' }}>
+                      <rect x={-labelW / 2} y={-9} width={labelW} height={18} rx={5} fill="#fff" stroke={color} strokeWidth={1} opacity={0.95} />
+                      <text x={0} y={4} textAnchor="middle" fontSize={11} fontWeight={600} fill="#5F2427">{conn.label}</text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+      )}
+
+      <div
+        className="absolute origin-top-left"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          pointerEvents: (isPanMode || readOnly) ? 'none' : 'auto'
+        }}
+      >
+        <CardMeasureContext.Provider value={handleCardMeasure}>
+        {/* Render GANTT cards first (background layer) */}
+        {cards.filter(c => c.type === CardType.GANTT).map(renderCard)}
+        {/* Render all other cards */}
+        {cards.filter(c => c.type !== CardType.GANTT).map(renderCard)}
+        </CardMeasureContext.Provider>
+        
+        {groupBounds && !dragState && (
+            <div
+                className="absolute border border-[#3A5C34] pointer-events-none z-[60]"
+                style={{
+                    left: groupBounds.x,
+                    top: groupBounds.y,
+                    width: groupBounds.width,
+                    height: groupBounds.height,
+                }}
+            />
+        )}
+
+        {/* Alignment snap guides (burgundy, 1 screen-px at any zoom) */}
+        {snapGuides.map((g, i) => (
+            <div
+                key={i}
+                className="absolute pointer-events-none z-[9997]"
+                style={g.orientation === 'v' ? {
+                    left: g.position,
+                    top: Math.min(g.from, g.to),
+                    width: 1 / scale,
+                    height: Math.abs(g.to - g.from),
+                    backgroundColor: '#5F2427',
+                } : {
+                    left: Math.min(g.from, g.to),
+                    top: g.position,
+                    width: Math.abs(g.to - g.from),
+                    height: 1 / scale,
+                    backgroundColor: '#5F2427',
+                }}
+            />
+        ))}
+
+        {/* Selection Toolbar */}
+        <SelectionToolbar
+            selectedCards={cards.filter(c => selectedCardIds.includes(c.id))}
+            groupBounds={groupBounds}
+            onGroup={handleGroup}
+            onUngroup={handleUngroup}
+            onAlign={handleAlign}
+            onDuplicate={handleDuplicateSelection}
+            onLockToggle={handleLockToggle}
+            onDelete={handleDeleteSelection}
+        />
+      </div>
+
+      {/* Connector creation overlay — ABOVE cards so hover-dots are grabbable. */}
+      {showConnectors && !readOnly && (
+        <svg className="absolute inset-0 w-full h-full" style={{ zIndex: 55, overflow: 'visible', pointerEvents: 'none' }}>
+          <defs>
+            <marker id="conn-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+            </marker>
+          </defs>
+          <g transform={`translate(${pan.x} ${pan.y}) scale(${scale})`}>
+            {connectFrom && connectCursor && (() => {
+              const a = rectById(connectFrom); if (!a) return null;
+              const targetRect = connectTarget && connectTarget !== connectFrom ? rectById(connectTarget) : null;
+              const aPt = targetRect ? anchors(a, targetRect).from : { x: a.x + a.width / 2, y: a.y + a.height / 2 };
+              const bPt = targetRect ? anchors(a, targetRect).to : connectCursor;
+              return (
+                <g>
+                  <path d={connectorPath('bezier', aPt, bPt)} fill="none" stroke="#3A5C34" strokeWidth={2} strokeDasharray="6 5" markerEnd="url(#conn-arrow)" />
+                  {targetRect && <rect x={targetRect.x} y={targetRect.y} width={targetRect.width} height={targetRect.height} rx={12} fill="none" stroke="#3A5C34" strokeWidth={2} opacity={0.7} />}
+                </g>
+              );
+            })()}
+            {hoverDotsCardId && (() => { const r = rectById(hoverDotsCardId); return r ? <g>{connectDots(r, hoverDotsCardId)}</g> : null; })()}
+          </g>
+        </svg>
+      )}
+
+      {/* Connector toolbar (when a connector is selected) */}
+      {selectedConnector && connectorToolbarPos && !readOnly && (
+        <ConnectorToolbar
+          connector={selectedConnector}
+          onChange={(patch) => onConnectorsChange?.(connectors.map(c => c.id === selectedConnector.id ? { ...c, ...patch } : c))}
+          onDelete={() => { onConnectorsChange?.(connectors.filter(c => c.id !== selectedConnector.id)); setSelectedConnectorId(null); }}
+          style={connectorToolbarPos}
+        />
+      )}
+
+      <div className="absolute inset-0 pointer-events-none">
+          <svg className="w-full h-full overflow-visible">
+              {isDrawing && currentStroke.length > 0 && (
+                  <path 
+                    d={`M ${currentStroke.map(p => `${(p.x * scale) + pan.x} ${(p.y * scale) + pan.y}`).join(' L ')}`}
+                    stroke={activeTool === 'HIGHLIGHTER' ? '#FFE500' : '#1C1C1E'}
+                    strokeWidth={(activeTool === 'HIGHLIGHTER' ? 20 : 4) * scale}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeOpacity={activeTool === 'HIGHLIGHTER' ? 0.5 : 1}
+                  />
+              )}
+              {isDrawing && activeTool === 'LASSO' && lassoPath.length > 0 && (
+                   <path 
+                   d={`M ${lassoPath.map(p => `${(p.x * scale) + pan.x} ${(p.y * scale) + pan.y}`).join(' L ')} Z`}
+                   stroke="#3A5C34"
+                   strokeWidth={2}
+                   fill="rgba(58, 92, 52, 0.1)"
+                   strokeDasharray="5,5"
+                 />
+              )}
+          </svg>
+          
+          {selectionBox && (
+              <div 
+                  className="absolute bg-[#3A5C34]/10 border border-[#3A5C34] z-[9999]"
+                  style={{
+                      left: Math.min(selectionBox.start.x, selectionBox.current.x),
+                      top: Math.min(selectionBox.start.y, selectionBox.current.y),
+                      width: Math.abs(selectionBox.current.x - selectionBox.start.x),
+                      height: Math.abs(selectionBox.current.y - selectionBox.start.y),
+                  }}
+              />
+          )}
+      </div>
+
+      {/* Right-click context menu (context-aware) */}
+      {contextMenu && (() => {
+        const sel = cards.filter(c => selectedCardIds.includes(c.id));
+        const single = sel.length === 1 ? sel[0] : null;
+        const isZone = single?.type === CardType.ZONE;
+        const multi = sel.length >= 2;
+        const hasZone = sel.some(c => c.type === CardType.ZONE);
+        const allLocked = sel.length > 0 && sel.every(c => c.isLocked);
+        const close = () => setContextMenu(null);
+        const run = (fn: () => void) => { fn(); close(); };
+
+        type Item = { icon: any; label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+        const items: (Item | 'sep' | 'colorrow' | 'toolsrow' | 'alignrow')[] = [];
+        const GROUP_COLORS = ['#FCCAE2', '#FFD753', '#3A5C34', '#5F2427', '#F9E6D1', '#007AFF', '#8E8E93'];
+        const quickTools = recentTools.filter(t => TOOL_VISUALS[t]).slice(0, 4);
+        const canPaste = hasInternalClipboard();
+        const menuWorld = screenToWorld(contextMenu.x, contextMenu.y);
+        const expandableTypes = [CardType.POST, CardType.STORY, CardType.REELS, CardType.DOC];
+
+        if (sel.length === 0) {
+          // Empty canvas
+          if (quickTools.length > 0) { items.push('toolsrow'); items.push('sep'); }
+          if (canPaste) items.push({ icon: ClipboardPaste, label: 'Paste here', onClick: () => run(() => insertClipboard(getInternalClipboard(), menuWorld)) });
+          items.push({ icon: MousePointerSquareDashed, label: 'Select all', onClick: () => run(() => setSelectedCardIds(cards.map(c => c.id))) });
+        } else if (allLocked) {
+          // Locked selection: only unlock + copy are meaningful.
+          items.push({ icon: Unlock, label: 'Unlock', onClick: () => run(handleLockToggle) });
+          items.push({ icon: Copy, label: 'Copy', onClick: () => run(() => { copyCurrentSelection(); }) });
+        } else {
+          if (multi) items.push({ icon: Group, label: 'Group', onClick: () => run(() => handleGroup('#FCCAE2')) });
+          if (isZone) {
+            items.push('colorrow');
+            items.push({ icon: LayoutGrid, label: 'Tidy up', onClick: () => run(() => handleTidyZone(single!.id)) });
+            items.push({ icon: Ungroup, label: 'Ungroup', onClick: () => run(() => handleUngroup(single!.id)) });
+          }
+          else if (multi && hasZone) items.push({ icon: Ungroup, label: 'Ungroup', onClick: () => run(() => handleUngroup(sel.find(c => c.type === CardType.ZONE)!.id)) });
+          if (multi) items.push('alignrow');
+          items.push('sep');
+          items.push({ icon: Copy, label: 'Copy', onClick: () => run(() => { copyCurrentSelection(); }) });
+          items.push({ icon: Copy, label: 'Duplicate', onClick: () => run(handleDuplicateSelection) });
+          if (canPaste) items.push({ icon: ClipboardPaste, label: 'Paste', onClick: () => run(() => insertClipboard(getInternalClipboard(), menuWorld)) });
+          if (single?.type === CardType.LINK) {
+            items.push({ icon: ExternalLink, label: 'Open link', onClick: () => run(() => { const u = (single.content as any)?.url; if (u) window.open(u, '_blank'); }) });
+          }
+          if (single && expandableTypes.includes(single.type)) {
+            items.push(single.alwaysExpanded
+              ? { icon: Shrink, label: 'Allow collapse', onClick: () => run(() => handleToggleAlwaysExpanded(single.id)) }
+              : { icon: Expand, label: 'Keep expanded', onClick: () => run(() => handleToggleAlwaysExpanded(single.id)) });
+          }
+          items.push('sep');
+          items.push({ icon: Lock, label: 'Lock', onClick: () => run(handleLockToggle) });
+          items.push({ icon: ArrowUpToLine, label: 'Bring to front', onClick: () => run(handleBringSelectionToFront) });
+          items.push({ icon: ArrowDownToLine, label: 'Send to back', onClick: () => run(handleSendToBack) });
+          items.push('sep');
+          items.push({ icon: Trash2, label: 'Delete', onClick: () => run(handleDeleteSelection), danger: true });
+        }
+
+        return (
+          <>
+            <div className="fixed inset-0 z-[200]" onMouseDown={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+            <div
+              className="fixed z-[201] min-w-[180px] bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.15)] border border-gray-100 py-1.5 animate-in fade-in zoom-in-95 duration-150"
+              style={{ left: Math.min(contextMenu.x, window.innerWidth - 200), top: Math.min(contextMenu.y, window.innerHeight - 320) }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {items.map((it, i) => {
+                if (it === 'sep') return <div key={i} className="h-px bg-gray-100 my-1" />;
+                if (it === 'toolsrow') return (
+                  <div key={i} className="flex items-center gap-1.5 px-2 py-1.5">
+                    {quickTools.map(t => {
+                      const v = TOOL_VISUALS[t]!;
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => addCardAtPoint(t)}
+                          title={v.label}
+                          className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm hover:scale-105 active:scale-95 transition-transform"
+                          style={{ backgroundColor: v.bg, color: v.fg }}
+                        >
+                          <v.Icon size={17} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+                if (it === 'colorrow') return (
+                  <div key={i} className="flex items-center justify-between gap-1 px-3 py-2">
+                    {GROUP_COLORS.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => { if (single) updateCardContent(single.id, { ...single.content, color: c }); close(); }}
+                        className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 ${(single?.content as ZoneCardContent)?.color === c ? 'ring-2 ring-offset-1 ring-gray-400 border-white' : 'border-black/10'}`}
+                        style={{ backgroundColor: c }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
+                );
+                if (it === 'alignrow') return (
+                  <div key={i} className="flex items-center justify-between gap-0.5 px-2 py-1.5">
+                    {([
+                      { k: 'left', Icon: AlignStartVertical, t: 'Align left' },
+                      { k: 'center', Icon: AlignCenterVertical, t: 'Align center' },
+                      { k: 'right', Icon: AlignEndVertical, t: 'Align right' },
+                      { k: 'top', Icon: AlignStartHorizontal, t: 'Align top' },
+                      { k: 'middle', Icon: AlignCenterHorizontal, t: 'Align middle' },
+                      { k: 'bottom', Icon: AlignEndHorizontal, t: 'Align bottom' },
+                    ] as const).map(({ k, Icon, t }) => (
+                      <button
+                        key={k}
+                        onClick={() => { handleAlign(k); close(); }}
+                        title={t}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                      >
+                        <Icon size={15} />
+                      </button>
+                    ))}
+                  </div>
+                );
+                return (
+                  <button
+                    key={i}
+                    onClick={it.onClick}
+                    className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium text-left transition-colors ${it.danger ? 'text-red-500 hover:bg-red-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    <it.icon size={15} className={it.danger ? 'text-red-500' : 'text-gray-400'} />
+                    {it.label}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        );
+      })()}
+    </div>
+  );
+};
