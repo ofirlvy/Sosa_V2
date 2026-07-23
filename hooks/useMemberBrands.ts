@@ -21,6 +21,23 @@ export function useMemberBrands(session: any) {
   }, [userId]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // If an owner grants access while the invitee is already signed in, pick it up
+  // without requiring an invite link or a full page reload.
+  useEffect(() => {
+    if (!userId) return;
+    const onFocus = () => refresh();
+    const onVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    const poll = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [userId, refresh]);
+
   // A shared brand can't be open once we log out.
   useEffect(() => { if (!userId) { setActiveSharedId(null); setSharedData(null); } }, [userId]);
 
