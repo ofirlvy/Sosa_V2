@@ -60,38 +60,27 @@ export const ensureSharedBrand = async (clientBrandId: string, name: string): Pr
   return (data as any)?.id ?? null;
 };
 
-/** Create an email-bound invite. The token remains available as an optional fallback link. */
-export const createInvite = async (sharedBrandId: string, email: string, role: BrandRole): Promise<string | null> => {
-  const owner = await uid();
-  if (!owner) return null;
+/** Create or refresh an email-bound invite through an owner-validated RPC.
+ * This avoids browser-side RLS ordering failures while keeping ownership checks
+ * inside Postgres. The token remains available as an optional fallback link. */
+export const createEmailInvite = async (
+  clientBrandId: string,
+  brandName: string,
+  email: string,
+  role: BrandRole,
+): Promise<{ sharedBrandId: string; token: string } | null> => {
   const normalizedEmail = email.trim().toLowerCase();
-  // Structural editor write-back is not implemented yet; the live sharing
-  // backend currently supports the two roles that the shared view enforces.
   const inviteRole: BrandRole = role === 'viewer' ? 'viewer' : 'commenter';
-
-  // Retrying the same address should be idempotent instead of failing a unique
-  // (brand,email) constraint or creating several pending invitations.
-  const { data: pending, error: lookupError } = await supabase
-    .from('brand_invites')
-    .select('id,token')
-    .eq('shared_brand_id', sharedBrandId)
-    .eq('email', normalizedEmail)
-    .eq('status', 'pending')
-    .limit(1);
-  if (lookupError) { console.error('createInvite lookup:', lookupError.message); return null; }
-  const existing = (pending as any[])?.[0];
-  if (existing) {
-    const { error } = await supabase.from('brand_invites').update({ role: inviteRole }).eq('id', existing.id);
-    if (error) { console.error('createInvite update:', error.message); return null; }
-    return existing.token;
-  }
-
-  const t = token();
-  const { error } = await supabase.from('brand_invites').insert({
-    shared_brand_id: sharedBrandId, token: t, email: normalizedEmail || null, role: inviteRole, invited_by: owner,
+  const { data, error } = await supabase.rpc('create_brand_email_invite', {
+    p_client_brand_id: clientBrandId,
+    p_brand_name: brandName,
+    p_email: normalizedEmail,
+    p_role: inviteRole,
   });
-  if (error) { console.error('createInvite:', error.message); return null; }
-  return t;
+  if (error) { console.error('createEmailInvite:', error.message); return null; }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.shared_brand_id || !row?.token) return null;
+  return { sharedBrandId: row.shared_brand_id, token: row.token };
 };
 
 /** The owner-published mirror of a shared brand's data. Owner is the sole writer. */
