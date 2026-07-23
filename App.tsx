@@ -33,7 +33,7 @@ import { useOwnerMirror } from './hooks/useOwnerMirror';
 import { useSharedRoster } from './hooks/useSharedRoster';
 import { useMemberBrands } from './hooks/useMemberBrands';
 import { SharedBrandView } from './components/SharedBrandView';
-import { ensureSharedBrand, createInvite, updateMemberRole, removeMember, revokeInvite } from './services/teamsBackend';
+import { createEmailInvite, updateMemberRole, removeMember, revokeInvite } from './services/teamsBackend';
 import {
   Loader2, Plus, Search, ChevronDown, Check, Trash2, Undo2, Redo2, Menu, LogOut, ArrowRight, Save, Cloud,
   Sparkles, FileText, StickyNote, Image as ImageIcon, Link as LinkIcon, BarChart2, LayoutGrid, Palette, Users, Clock, Mail,
@@ -1156,15 +1156,16 @@ export default function App() {
           roster={activeRoster}
           canManage
           onInvite={async (email, role) => {
-            let sharedId = ownedSharedMap[activeBrandId];
-            if (!sharedId) {
-              sharedId = (await ensureSharedBrand(activeBrandId, activeBrand?.name || 'Brand')) || undefined;
-              await refreshSharedBrands();
-            }
-            if (!sharedId) return null;
-            const t = await createInvite(sharedId, email, role);
+            const invite = await createEmailInvite(
+              activeBrandId,
+              activeBrand?.name || 'Brand',
+              email,
+              role,
+            );
+            if (!invite) return null;
+            await refreshSharedBrands();
             await reloadRoster();
-            return t ? `${window.location.origin}${window.location.pathname}?invite=${t}` : null;
+            return `${window.location.origin}${window.location.pathname}?invite=${invite.token}`;
           }}
           onChangeRole={(id, role) => {
             const sharedId = ownedSharedMap[activeBrandId];
