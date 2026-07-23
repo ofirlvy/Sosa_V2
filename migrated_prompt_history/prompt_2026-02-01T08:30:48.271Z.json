@@ -1,0 +1,137 @@
+[
+  {
+    "id": 0,
+    "author": "user",
+    "payload": {
+      "type": "text",
+      "text": "You are a senior product designer and startup strategist with experience building collaborative SaaS tools (e.g. Figma, Notion, Miro).\n\nI want to design a new, highly aesthetic and innovative whiteboard-based app that helps brand teams plan, strategize, and manage their entire advertising ecosystem in one place (Meta ads, paid social, organic content, e-commerce, newsletters, campaigns).\n\nCore concept:\n- The app is an infinite whiteboard.\n- Users can create unlimited tabs (like “Summer Campaign”, “Evergreen Content”, “Meta Strategy”, etc.).\n- Each tab represents a strategic workspace.\n- A toolbar allows users to add different types of “smart cards” onto the board.\n\nExample smart card (already imagined): **Post Card**\n- Automatically generates a serial/index number in the title.\n- Editable post title + scheduled posting date.\n- “References” section:\n  - Grid of draggable upload/link cubes (images, videos, URLs).\n  - Add, remove, reorder freely.\n- Caption / description text area.\n- Customizable to-do list (renamable, flexible use cases).\n- “Final Post” section:\n  - Upload final assets in a draggable grid (similar to references).\n- Footer actions:\n  - Assign team members.\n  - Open threaded comments (similar to Figma comments).\n  - Sync final assets to Google Drive (auto-create folder named with post title + index).\n\nYour task:\n1. Expand this idea into a **clear product concept**.\n2. Propose **5–7 additional smart card types** that are:\n   - Innovative\n   - Purpose-built for brand/marketing teams\n   - Clearly differentiated from Notion/Miro/Figma\n3. For each card, explain:\n   - What problem it solves\n   - Key features\n   - Why it’s powerful in a whiteboard context\n4. Suggest how the overall app:\n   - Encourages strategic thinking (not just task management)\n   - Feels visually premium and modern\n   - Scales from small teams to large brand organizations\n5. (Optional but valuable) Propose a strong MVP scope vs future expansion.\n\nUse clear sections, bullet points, and concise explanations.\nAvoid generic SaaS ideas — prioritize originality and product clarity.",
+      "files": [],
+      "fileUploads": [],
+      "cMarkNode": {}
+    },
+    "createdTimestamp": {
+      "seconds": 1769933567,
+      "nanos": 968000000
+    }
+  },
+  {
+    "id": 1,
+    "author": "model",
+    "payload": {
+      "type": "thinking",
+      "text": "**Analyzing the Needs**\n\nI'm currently breaking down the request, focusing on the roles involved: Senior Product Designer/Startup Strategist and Senior Frontend React Engineer. I'm starting to understand the specific needs and expectations from each perspective, looking for the common ground where the product concept can flourish and meet the user's needs.\n\n\n**Defining the Vision**\n\nI've named the project \"Orbit,\" aiming for a clean, minimalist aesthetic reminiscent of Linear.app and Figma, with potential for dark mode. I'm exploring \"smart cards\" for diverse brand strategy components, such as a \"Post Card\". Now, I am crafting new card concepts and evaluating their strategic value, focusing on expanding on the core features in order to build a minimum viable product.\n\n\n**Expanding the Core Features**\n\nI'm now diving into the \"smart card\" concept further, going beyond initial brainstorming. My focus is on differentiation: these aren't just digital sticky notes; they're structured data. Each card is essentially a mini-app. I've designed several new \"smart cards,\" including a Persona/Audience Card, Campaign Brief Card, and AI Brainstorm Card using Gemini, to make the project more feature-rich. I am considering tech, specifically React and Tailwind, and how I'll handle state management.\n\n\n**Refining the Technical Approach**\n\nI'm now zeroing in on the technical implementation details. I've decided to keep state centrally in `App.tsx` for simplicity. For canvas interaction, I'll implement basic pan/zoom manually using CSS transforms because heavy libraries seem overkill for an MVP. Drag and drop will use mouse event listeners for absolute positioning. The Gemini integration will fit seamlessly into the \"AI Brainstorm Card\" using the `@google/genai` SDK. I'm imagining a `CardWrapper` component to handle position, selection, and dragging, and a `PostCard` component will manage the post details.\n\n\n**Outlining the Structure**\n\nI'm now detailing more card types: a `StrategyCard` powered by AI, a visual `MoodboardCard`, and an `AnalyticsCard` with charts. I've drafted a step-by-step implementation plan, starting with a `metadata.json` and basic setup files, including `index.html` and `index.tsx`. I'm defining types for `Card`, `CardType`, `Position`, and `Workspace` in `types.ts`, and considering canvas and card components and how the `App.tsx` file will serve as the main state holder. I'm also refining the logic and visuals for the \"Post Card,\" considering inputs and visual elements.\n\n\n**Implementing the AI Features**\n\nI'm now integrating Gemini, focusing on the \"AI Strategy Card.\" I'm generating hooks with Gemini given input questions. I'm also refining the technical approach, now deciding to handle dragging with simple `onMouseDown` handlers. Zoom will use a `scale` state. I'll maintain the requested file structure. I'm also adding Tailwind classes for a premium SaaS look.\n\nI'm also considering the \"Product Designer\" prompt. I am deciding to fulfill this request by adding a `README.md`, or a \"Welcome\" modal in the app that explains the product concept.\n\n\n",
+      "cMarkNode": {}
+    },
+    "createdTimestamp": {
+      "seconds": 1769933567,
+      "nanos": 968000000
+    },
+    "doneTimestamp": {
+      "seconds": 1769933589,
+      "nanos": 975000000
+    }
+  },
+  {
+    "id": 2,
+    "author": "model",
+    "payload": {
+      "type": "text",
+      "text": "Here is the complete code for **Orbit**, the strategic whiteboard application for brand teams.\n\nThis implementation includes:\n1.  **Infinite Canvas**: A pan-and-zoom interface.\n2.  **Smart Cards**: Including the requested **Post Card** and 3 additional strategic cards (AI Strategy, Analytics, Audience Persona).\n3.  **Gemini AI Integration**: A dedicated card that uses the Gemini API to generate marketing hooks and strategies.\n4.  **Premium UI/UX**: Using Tailwind for a glassmorphism, high-end SaaS aesthetic.\n5.  **Product Concept**: A \"Read Me\" file is included in the file list to answer the strategic product design questions.\n\n",
+      "cMarkNode": {}
+    },
+    "createdTimestamp": {
+      "seconds": 1769933589,
+      "nanos": 975000000
+    },
+    "doneTimestamp": {
+      "seconds": 1769933590,
+      "nanos": 152000000
+    }
+  },
+  {
+    "id": 3,
+    "author": "model",
+    "payload": {
+      "type": "generationTable",
+      "entries": [
+        {
+          "path": "metadata.json",
+          "generationType": 0,
+          "isDone": true,
+          "description": "App metadata definition",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "{\n  \"name\": \"Orbit - Brand Strategy OS\",\n  \"description\": \"An infinite spatial canvas for brand teams to plan, strategize, and manage campaigns. Features smart cards, AI-powered brainstorming, and visual asset management.\"\n}"
+            }
+          ]
+        },
+        {
+          "path": "PRODUCT_CONCEPT.md",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Strategic Product Concept and Card Definitions",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "# Orbit: The Brand Ecosystem OS\n\n## 1. Product Concept\n**Orbit** moves beyond linear project management (Asana) or generic whiteboards (Miro) by creating a \"Spatial Operating System\" specifically for marketers. \n\nThe core philosophy is **Contextual Strategy**. In traditional tools, the \"Strategy\" (a doc) is separated from the \"Execution\" (a task). In Orbit, the Strategy Card sits physically next to the Post Card, linked by visual proximity and data.\n\n## 2. Additional Smart Card Types\nThese cards are implemented (or prepared for) in the codebase:\n\n1.  **The Oracle (AI Strategy Card)**\n    *   **Problem:** Writer's block and lack of strategic alignment.\n    *   **Feature:** Input a topic/goal, utilizes Google Gemini to generate 5-10 distinct angles/hooks.\n    *   **Why:** Turns the board into an active participant, not just a passive record.\n\n2.  **Live Pulse (Analytics Card)**\n    *   **Problem:** disconnecting creative work from performance data.\n    *   **Feature:** specific KPI visualizations (ROAS, CTR, Impressions) using D3/Recharts.\n    *   **Why:** Forces creative teams to design with data in view.\n\n3.  **Persona Profile**\n    *   **Problem:** Losing sight of who the customer is during asset production.\n    *   **Feature:** A rigid, always-visible card with Avatar, Pains, and Gains.\n    *   **Why:** anchored visual reminder of the target audience.\n\n4.  **Asset DAM (Digital Asset Manager)**\n    *   **Problem:** Google Drive folders are hard to browse visually.\n    *   **Feature:** A mini-grid of approved brand assets that can be dragged into Post Cards.\n\n5.  **Campaign Timeline**\n    *   **Problem:** Gantt charts are too heavy for social.\n    *   **Feature:** A simplified horizontal timeline card to visualize flight dates.\n\n## 3. Strategic & Aesthetic Values\n*   **Strategic Thinking:** By placing \"Why\" cards (Strategy/Persona) next to \"What\" cards (Posts), users implicitly check their work against the goal.\n*   **Visual Premium:** Glassmorphism, subtle shadows, and distinct \"blocks\" (not sticky notes) make it feel like a control room, not a messy desk.\n*   **Scale:** Tabs allow breaking down by Quarter or Channel, preventing the \"infinite mess\" syndrome.\n"
+            }
+          ]
+        },
+        {
+          "path": "index.html",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Root HTML file with Tailwind and Google Fonts",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Orbit - Brand Strategy</title>\n    <script src=\"https://cdn.tailwindcss.com\"></script>\n    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap\" rel=\"stylesheet\">\n    <style>\n      body {\n        font-family: 'Inter', sans-serif;\n        background-color: #f3f4f6;\n        overflow: hidden; /* Prevent native scroll, we use canvas panning */\n      }\n      /* Hide scrollbar for clean UI */\n      .no-scrollbar::-webkit-scrollbar {\n        display: none;\n      }\n      .no-scrollbar {\n        -ms-overflow-style: none;\n        scrollbar-width: none;\n      }\n      .glass-panel {\n        background: rgba(255, 255, 255, 0.85);\n        backdrop-filter: blur(12px);\n        -webkit-backdrop-filter: blur(12px);\n        border: 1px solid rgba(255, 255, 255, 0.5);\n      }\n    </style>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n  </body>\n</html>"
+            }
+          ]
+        },
+        {
+          "path": "types.ts",
+          "generationType": 0,
+          "isDone": true,
+          "description": "TypeScript definitions for the application state",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "export enum CardType {\n  POST = 'POST',\n  STRATEGY_AI = 'STRATEGY_AI',\n  ANALYTICS = 'ANALYTICS',\n  PERSONA = 'PERSONA'\n}\n\nexport interface Position {\n  x: number;\n  y: number;\n}\n\nexport interface CardData {\n  id: string;\n  type: CardType;\n  x: number;\n  y: number;\n  width: number;\n  height: number;\n  zIndex: number;\n  // Generic data bucket for different card needs\n  content: any;\n}\n\nexport interface Workspace {\n  id: string;\n  name: string;\n  cards: CardData[];\n}\n\nexport interface AppState {\n  workspaces: Workspace[];\n  activeWorkspaceId: string;\n  scale: number;\n  pan: Position;\n}\n"
+            }
+          ]
+        },
+        {
+          "path": "services/geminiService.ts",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Service to interact with Google Gemini API",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "import { GoogleGenAI } from \"@google/genai\";\n\nconst apiKey = process.env.API_KEY || '';\nconst ai = new GoogleGenAI({ apiKey });\n\nexport const generateMarketingStrategy = async (\n  topic: string, \n  audience: string, \n  tone: string\n): Promise<string> => {\n  if (!apiKey) {\n    return \"Error: No API Key configured. Please set the API_KEY environment variable.\";\n  }\n\n  try {\n    const prompt = `\n      Act as a world-class creative director. \n      I need 5 distinct marketing hooks/angles for the following context:\n      Topic/Product: ${topic}\n      Target Audience: ${audience}\n      Tone: ${tone}\n\n      Format the output as a clean HTML list (<ul><li>...</li></ul>) without markdown backticks. \n      Keep each hook punchy and under 20 words.\n    `;\n\n    const response = await ai.models.generateContent({\n      model: 'gemini-3-flash-preview',\n      contents: prompt,\n    });\n\n    return response.text || \"No response generated.\";\n  } catch (error) {\n    console.error(\"Gemini API Error:\", error);\n    return \"Failed to generate strategy. Please try again.\";\n  }\n};\n"
+            }
+          ]
+        },
+        {
+          "path": "components/ui/Button.tsx",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Reusable button component",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "import React from 'react';\n\ninterface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {\n  variant?: 'primary' | 'secondary' | 'ghost' | 'icon';\n  size?: 'sm' | 'md' | 'lg';\n}\n\nexport const Button: React.FC<ButtonProps> = ({ \n  children, \n  variant = 'primary', \n  size = 'md', \n  className = '', \n  ...props \n}) => {\n  const baseStyles = \"inline-flex items-center justify-center rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed font-medium\";\n  \n  const variants = {\n    primary: \"bg-blue-600 text-white hover:bg-blue-700 shadow-sm focus:ring-blue-500\",\n    secondary: \"bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 shadow-sm focus:ring-gray-200\",\n    ghost: \"text-gray-600 hover:bg-gray-100 hover:text-gray-900\",\n    icon: \"text-gray-500 hover:bg-gray-100 p-2 rounded-full\"\n  };\n\n  const sizes = {\n    sm: \"px-3 py-1.5 text-xs\",\n    md: \"px-4 py-2 text-sm\",\n    lg: \"px-6 py-3 text-base\"\n  };\n\n  const finalClass = `${baseStyles} ${variants[variant]} ${variant === 'icon' ? '' : sizes[size]} ${className}`;\n\n  return (\n    <button className={finalClass} {...props}>\n      {children}\n    </button>\n  );\n};\n"
+            }
+          ]
+        },
+        {
+          "path": "components/cards/BaseCard.tsx",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Wrapper component for draggable cards",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "import React, { useState, useEffect, useRef } from 'react';\nimport { CardData, CardType } from '../../types';\nimport { GripHorizontal, X, maximize2 } from 'lucide-react';\n\ninterface BaseCardProps {\n  card: CardData;\n  isSelected: boolean;\n  onSelect: (id: string) => void;\n  onMove: (id: string, x: number, y: number) => void;\n  onDelete: (id: string) => void;\n  zoomScale: number;\n  children: React.ReactNode;\n  title: string;\n  accentColor?: string;\n  icon?: React.ReactNode;\n}\n\nexport const BaseCard: React.FC<BaseCardProps> = ({\n  card,\n  isSelected,\n  onSelect,\n  onMove,\n  onDelete,\n  zoomScale,\n  children,\n  title,\n  accentColor = \"border-gray-200\",\n  icon\n}) => {\n  const [isDragging, setIsDragging] = use
