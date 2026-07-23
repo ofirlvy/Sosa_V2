@@ -27,7 +27,7 @@ const Avatar: React.FC<{ member: BrandMember; size?: number }> = ({ member, size
   return <div style={s} className="rounded-full bg-gradient-to-br from-[#3A5C34] to-[#2d4a29] text-white flex items-center justify-center text-[12px] font-bold">{initials(member.name)}</div>;
 };
 
-const RoleSelect: React.FC<{ value: BrandRole; disabled?: boolean; onChange: (r: BrandRole) => void }> = ({ value, disabled, onChange }) => (
+const RoleSelect: React.FC<{ value: BrandRole; disabled?: boolean; options?: BrandRole[]; onChange: (r: BrandRole) => void }> = ({ value, disabled, options = ASSIGNABLE_ROLES, onChange }) => (
   <div className="relative">
     <select
       value={value}
@@ -37,7 +37,7 @@ const RoleSelect: React.FC<{ value: BrandRole; disabled?: boolean; onChange: (r:
     >
       {value === 'owner'
         ? <option value="owner">Owner</option>
-        : ASSIGNABLE_ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+        : options.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
     </select>
     {!disabled && <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />}
   </div>
@@ -45,7 +45,7 @@ const RoleSelect: React.FC<{ value: BrandRole; disabled?: boolean; onChange: (r:
 
 export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, canManage, onInvite, onChangeRole, onRemove, onClose }) => {
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<BrandRole>('editor');
+  const [role, setRole] = useState<BrandRole>('commenter');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [lastLink, setLastLink] = useState('');
@@ -95,7 +95,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, c
                   placeholder="Invite by email…"
                   className="flex-1 min-w-0 h-9 px-3 rounded-lg bg-[#F9F8F6] border border-[#5F2427]/10 text-[13px] text-[#5F2427] outline-none focus:border-[#3A5C34]/40"
                 />
-                <RoleSelect value={role} onChange={setRole} />
+                <RoleSelect value={role} options={['commenter', 'viewer']} onChange={setRole} />
                 <button onClick={invite} disabled={busy} className="shrink-0 h-9 px-3 rounded-lg bg-[#3A5C34] text-white text-[13px] font-bold flex items-center gap-1.5 hover:bg-[#2d4a29] disabled:opacity-60 transition-colors">
                   <UserPlus size={14} /> {busy ? 'Granting…' : 'Grant access'}
                 </button>
