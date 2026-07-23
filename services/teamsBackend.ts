@@ -60,13 +60,14 @@ export const ensureSharedBrand = async (clientBrandId: string, name: string): Pr
   return (data as any)?.id ?? null;
 };
 
-/** Create an invite and return the token (for a copyable link). */
+/** Create an email-bound invite. The token remains available as an optional fallback link. */
 export const createInvite = async (sharedBrandId: string, email: string, role: BrandRole): Promise<string | null> => {
   const owner = await uid();
   if (!owner) return null;
   const t = token();
+  const normalizedEmail = email.trim().toLowerCase();
   const { error } = await supabase.from('brand_invites').insert({
-    shared_brand_id: sharedBrandId, token: t, email: email || null, role, invited_by: owner,
+    shared_brand_id: sharedBrandId, token: t, email: normalizedEmail || null, role, invited_by: owner,
   });
   if (error) { console.error('createInvite:', error.message); return null; }
   return t;
@@ -124,11 +125,25 @@ export const revokeInvite = async (inviteId: string): Promise<boolean> => {
 
 // ---------------------------------------------------------------- MEMBER
 
+/**
+ * Claim every pending invite whose normalized email matches the authenticated
+ * user's verified Supabase email. The RPC derives both identity and email from
+ * auth; the browser never gets to choose which email to claim.
+ */
+export const claimInvitesForSignedInEmail = async (): Promise<boolean> => {
+  const { error } = await supabase.rpc('claim_brand_invites_by_email');
+  if (error) { console.error('claimInvitesForSignedInEmail:', error.message); return false; }
+  return true;
+};
+
 /** Every shared brand the current user can see: their own (isOwner) + ones shared
  *  with them. Roles: owned → 'owner'; else from their brand_members row. */
 export const listMySharedBrands = async (): Promise<SharedBrandRef[]> => {
   const me = await uid();
   if (!me) return [];
+  // Safe to run repeatedly: the server function is idempotent and only claims
+  // invitations for the email embedded in this signed-in user's JWT.
+  await claimInvitesForSignedInEmail();
   const { data: brands, error } = await supabase
     .from('shared_brands')
     .select('id,owner_id,client_brand_id,name');
