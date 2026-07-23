@@ -7,14 +7,14 @@ import { X, UserPlus, ChevronDown, Users, Link2, Check } from 'lucide-react';
 
 // Share / Members — per brand. Manage who's on THIS brand and their role; access
 // is always per-brand (an individual can share one brand without exposing the
-// rest). Inviting generates a REAL copyable link — the invitee opens it, signs
-// in, and gets access (Teams Phase 2). Tokens mirror SettingsModal.
+// rest). An invitation is bound to the entered email and activates automatically
+// when that person signs in. A token link remains available only as a fallback.
 
 interface MembersModalProps {
   brandName: string;
   roster: BrandMember[];        // resolved: owner first, then members
   canManage: boolean;           // current user is the owner
-  /** Create an invite; returns the copyable link (or null on failure). */
+  /** Create an email-bound invite; returns an optional fallback link. */
   onInvite: (email: string, role: BrandRole) => Promise<string | null>;
   onChangeRole: (memberId: string, role: BrandRole) => void;
   onRemove: (memberId: string) => void;
@@ -49,6 +49,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, c
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [lastLink, setLastLink] = useState('');
+  const [grantedEmail, setGrantedEmail] = useState('');
   const [copied, setCopied] = useState(false);
 
   const invite = async () => {
@@ -59,7 +60,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, c
     const link = await onInvite(e, role);
     setBusy(false);
     if (!link) { setError('Could not create the invite — try again'); return; }
-    setLastLink(link); setEmail(''); setError(''); setCopied(false);
+    setLastLink(link); setGrantedEmail(e.toLowerCase()); setEmail(''); setError(''); setCopied(false);
   };
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(lastLink); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
@@ -96,19 +97,26 @@ export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, c
                 />
                 <RoleSelect value={role} onChange={setRole} />
                 <button onClick={invite} disabled={busy} className="shrink-0 h-9 px-3 rounded-lg bg-[#3A5C34] text-white text-[13px] font-bold flex items-center gap-1.5 hover:bg-[#2d4a29] disabled:opacity-60 transition-colors">
-                  <UserPlus size={14} /> {busy ? 'Creating…' : 'Invite'}
+                  <UserPlus size={14} /> {busy ? 'Granting…' : 'Grant access'}
                 </button>
               </div>
               {error
                 ? <p className="text-[11px] text-red-500 mt-1.5 px-1">{error}</p>
-                : <p className="text-[11px] text-[#5F2427]/40 mt-1.5 px-1">{ROLE_HINT[role]} · they get access when they open the link and sign in</p>}
-              {lastLink && (
-                <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-[#3A5C34]/[0.06] border border-[#3A5C34]/15 p-1.5">
-                  <Link2 size={14} className="text-[#3A5C34] shrink-0 ml-1" />
-                  <input readOnly value={lastLink} onFocus={e => e.currentTarget.select()} className="flex-1 min-w-0 bg-transparent text-[12px] text-[#5F2427]/80 outline-none" />
-                  <button onClick={copyLink} className="shrink-0 h-7 px-2.5 rounded-md bg-[#3A5C34] text-white text-[12px] font-bold flex items-center gap-1 hover:bg-[#2d4a29] transition-colors">
-                    {copied ? <><Check size={13} /> Copied</> : 'Copy link'}
-                  </button>
+                : <p className="text-[11px] text-[#5F2427]/40 mt-1.5 px-1">{ROLE_HINT[role]} · access activates automatically when this email signs in</p>}
+              {grantedEmail && (
+                <div className="mt-2.5 rounded-lg bg-[#3A5C34]/[0.06] border border-[#3A5C34]/15 p-2.5">
+                  <div className="flex items-start gap-2">
+                    <Check size={15} className="text-[#3A5C34] shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-bold text-[#3A5C34]">Access saved for {grantedEmail}</p>
+                      <p className="text-[11px] text-[#5F2427]/55 mt-0.5">They will see only “{brandName}” automatically after signing in with this email.</p>
+                    </div>
+                  </div>
+                  {lastLink && (
+                    <button onClick={copyLink} className="mt-2 ml-6 h-7 px-2.5 rounded-md bg-white border border-[#3A5C34]/20 text-[#3A5C34] text-[11px] font-bold flex items-center gap-1.5 hover:bg-[#3A5C34]/5 transition-colors">
+                      <Link2 size={12} /> {copied ? 'Fallback link copied' : 'Copy optional fallback link'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -125,7 +133,7 @@ export const MembersModal: React.FC<MembersModalProps> = ({ brandName, roster, c
                     <div className="flex items-center gap-1.5">
                       <span className="text-[13px] font-semibold text-[#5F2427] truncate">{m.name}</span>
                       {isOwner && <span className="text-[10px] font-bold text-[#5F2427]/40">You</span>}
-                      {m.status === 'invited' && <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[#FFD753]/40 text-[#5F2427]">Pending</span>}
+                      {m.status === 'invited' && <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[#FFD753]/40 text-[#5F2427]">Awaiting sign-in</span>}
                     </div>
                     <div className="text-[11px] text-[#5F2427]/40 truncate">{m.email || '—'}</div>
                   </div>
