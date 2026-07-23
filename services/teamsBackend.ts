@@ -64,10 +64,31 @@ export const ensureSharedBrand = async (clientBrandId: string, name: string): Pr
 export const createInvite = async (sharedBrandId: string, email: string, role: BrandRole): Promise<string | null> => {
   const owner = await uid();
   if (!owner) return null;
-  const t = token();
   const normalizedEmail = email.trim().toLowerCase();
+  // Structural editor write-back is not implemented yet; the live sharing
+  // backend currently supports the two roles that the shared view enforces.
+  const inviteRole: BrandRole = role === 'viewer' ? 'viewer' : 'commenter';
+
+  // Retrying the same address should be idempotent instead of failing a unique
+  // (brand,email) constraint or creating several pending invitations.
+  const { data: pending, error: lookupError } = await supabase
+    .from('brand_invites')
+    .select('id,token')
+    .eq('shared_brand_id', sharedBrandId)
+    .eq('email', normalizedEmail)
+    .eq('status', 'pending')
+    .limit(1);
+  if (lookupError) { console.error('createInvite lookup:', lookupError.message); return null; }
+  const existing = (pending as any[])?.[0];
+  if (existing) {
+    const { error } = await supabase.from('brand_invites').update({ role: inviteRole }).eq('id', existing.id);
+    if (error) { console.error('createInvite update:', error.message); return null; }
+    return existing.token;
+  }
+
+  const t = token();
   const { error } = await supabase.from('brand_invites').insert({
-    shared_brand_id: sharedBrandId, token: t, email: normalizedEmail || null, role, invited_by: owner,
+    shared_brand_id: sharedBrandId, token: t, email: normalizedEmail || null, role: inviteRole, invited_by: owner,
   });
   if (error) { console.error('createInvite:', error.message); return null; }
   return t;
