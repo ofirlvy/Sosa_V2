@@ -1,9 +1,4 @@
--- Migration 0003: atomically create a shared brand + email invitation
---
--- The browser previously had to create shared_brands and brand_invites in two
--- separate RLS-protected writes. This owner-validated SECURITY DEFINER RPC makes
--- the operation atomic while still preventing invitations for anyone else's brand.
-
+-- Atomically create a shared brand and an email-bound invitation.
 begin;
 
 create or replace function public.create_brand_email_invite(
@@ -20,7 +15,10 @@ as $$
 declare
   v_owner_id uuid := auth.uid();
   v_email text := lower(trim(coalesce(p_email, '')));
-  v_role text := case when p_role = 'viewer' then 'viewer' else 'commenter' end;
+  v_role text := case
+    when p_role in ('editor', 'viewer', 'commenter') then p_role
+    else 'commenter'
+  end;
   v_shared_brand_id uuid;
   v_token text;
   v_invite_id uuid;
@@ -41,27 +39,20 @@ begin
   do update set name = excluded.name
   returning id into v_shared_brand_id;
 
-  select i.id, i.token
-    into v_invite_id, v_token
+  select i.id, i.token into v_invite_id, v_token
     from public.brand_invites i
    where i.shared_brand_id = v_shared_brand_id
      and lower(trim(coalesce(i.email, ''))) = v_email
      and i.status = 'pending'
-   order by i.id
-   limit 1
-   for update;
+   order by i.id limit 1 for update;
 
   if v_invite_id is not null then
-    update public.brand_invites
-       set role = v_role,
-           email = v_email
+    update public.brand_invites set role = v_role, email = v_email
      where id = v_invite_id;
   else
     v_token := md5(v_owner_id::text || v_email || clock_timestamp()::text || random()::text);
-    insert into public.brand_invites
-      (shared_brand_id, token, email, role, invited_by)
-    values
-      (v_shared_brand_id, v_token, v_email, v_role, v_owner_id);
+    insert into public.brand_invites (shared_brand_id, token, email, role, invited_by)
+    values (v_shared_brand_id, v_token, v_email, v_role, v_owner_id);
   end if;
 
   return query select v_shared_brand_id, v_token;
@@ -70,7 +61,5 @@ $$;
 
 revoke all on function public.create_brand_email_invite(text, text, text, text) from public;
 grant execute on function public.create_brand_email_invite(text, text, text, text) to authenticated;
-
 notify pgrst, 'reload schema';
-
 commit;

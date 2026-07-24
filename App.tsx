@@ -27,13 +27,14 @@ import { LoginForm } from './components/auth/LoginForm';
 import { RegisterForm } from './components/auth/RegisterForm';
 import { OnboardingFlow } from './components/auth/OnboardingFlow';
 import { BrandIdentityProvider } from './contexts/BrandIdentity';
-import { resolveRoster } from './services/brandMembers';
+import { resolveRoster, canComment } from './services/brandMembers';
 import { MembersModal } from './components/modals/MembersModal';
 import { useOwnerMirror } from './hooks/useOwnerMirror';
 import { useSharedRoster } from './hooks/useSharedRoster';
+import { useSharedComments } from './hooks/useSharedComments';
 import { useMemberBrands } from './hooks/useMemberBrands';
-import { SharedBrandView } from './components/SharedBrandView';
-import { createEmailInvite, updateMemberRole, removeMember, revokeInvite } from './services/teamsBackend';
+import { useSharedWorkspace } from './hooks/useSharedWorkspace';
+import { createEmailInvite, updateMemberRole, removeMember, revokeInvite, SharedBrandRef } from './services/teamsBackend';
 import {
   Loader2, Plus, Search, ChevronDown, Check, Trash2, Undo2, Redo2, Menu, LogOut, ArrowRight, Save, Cloud,
   Sparkles, FileText, StickyNote, Image as ImageIcon, Link as LinkIcon, BarChart2, LayoutGrid, Palette, Users, Clock, Mail,
@@ -128,9 +129,9 @@ export default function App() {
 
   // --- Domain State (hooks) ---
   const {
-    nodes, setNodes, activeNodeId, setActiveNodeId, nodesLoaded, saveError,
-    handleUpdateNode, handleMoveNode, handleReorderNode,
-    toggleFavorite, toggleExpand, getSortedChildren,
+    nodes: ownNodes, setNodes: setOwnNodes, activeNodeId, setActiveNodeId, nodesLoaded, saveError,
+    handleUpdateNode: ownHandleUpdateNode, handleMoveNode: ownHandleMoveNode, handleReorderNode: ownHandleReorderNode,
+    toggleFavorite: ownToggleFavorite, toggleExpand: ownToggleExpand, getSortedChildren: ownGetSortedChildren,
     getSnapshots, restoreFromSnapshot,
   } = useFileSystem({ session, onboardingComplete });
 
@@ -141,6 +142,97 @@ export default function App() {
 
   // --- Publish reminders (Phase B: fires while the app is open) ---
   const [publishKitItem, setPublishKitItem] = useState<QueueItem | null>(null);
+
+  // Brand-wide calendar events (the "marketing gantt").
+  const { events: ownEvents, addEvent: ownAddEvent, updateEvent: ownUpdateEvent, deleteEvent: ownDeleteEvent } = useCalendarEvents({ session, onboardingComplete });
+
+  // --- Brands (workspaces) ---
+  // One primitive: each brand owns its tree, calendar+events and feed. Views get
+  // BRAND-FILTERED data; every mutation path keeps operating on the FULL maps.
+  const { brands, activeBrandId, activeBrand, addBrand, renameBrand, updateBrandAvatar, updateBrandProfile, updateBrandFeedCadence, addBrandDraft, updateBrandDraft, removeBrandDraft, addBrandMember, updateBrandMember, removeBrandMember, switchBrand } = useBrandSpaces({
+    session, onboardingComplete,
+    fallbackName: brand?.name || userProfile?.full_name || 'My Brand',
+  });
+  // Teams Phase 2 (owner side): publish each SHARED brand's slice to brand_data
+  // ONCE at share-time (a seed, not a continuous push — Round 2 makes brand_data
+  // the live shared store, so an editor's writes must never be clobbered by the
+  // owner's blob). Always reads the OWNER'S OWN blob (own*), never the effective
+  // (possibly-shared) values below.
+  const { sharedMap: ownedSharedMap, refresh: refreshSharedBrands } = useOwnerMirror({ session, nodesLoaded, nodes: ownNodes, events: ownEvents, brands });
+  const localRoster = useMemo(() => resolveRoster(activeBrand, userProfile), [activeBrand, userProfile]);
+  const ownerForRoster = useMemo(
+    () => (userProfile ? { id: userProfile.id, name: userProfile.full_name, email: userProfile.email, avatarUrl: userProfile.avatar_url } : null),
+    [userProfile],
+  );
+  const [membersOpen, setMembersOpen] = useState(false);
+
+  // Teams Phase 2 (member side): brands shared WITH me, and which one is open.
+  const memberBrands = useMemberBrands(session);
+  // Accept an invite link (?invite=<token>) once signed in; survive the auth hop.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const t = url.searchParams.get('invite');
+    if (t) { try { localStorage.setItem('sosa_pending_invite', t); } catch { /* quota */ } url.searchParams.delete('invite'); window.history.replaceState({}, '', url.toString()); }
+  }, []);
+  useEffect(() => {
+    if (!session || !onboardingComplete) return;
+    let pending: string | null = null;
+    try { pending = localStorage.getItem('sosa_pending_invite'); } catch { /* */ }
+    if (!pending) return;
+    try { localStorage.removeItem('sosa_pending_invite'); } catch { /* */ }
+    memberBrands.acceptAndOpen(pending);
+  }, [session, onboardingComplete]);
+
+  // --- Teams Phase 2 Round 2: the effective data source ------------------------
+  // A shared brand is a SHARED DOCUMENT: whoever opens it — the owner or a member
+  // — reads/writes the SAME live `brand_data` row. `activeShared` unifies both
+  // entry points: a member explicitly opened "Shared with me", OR the owner's own
+  // brand switcher landed on a brand id they've shared (ownedSharedMap). Whichever
+  // is non-null, the WHOLE app (Home/Canvas/Calendar/Feed) below reads from the
+  // shared store instead of the personal blob — never both at once, so there's
+  // never a question of which one is "the truth".
+  const activeShared: SharedBrandRef | null = memberBrands.activeShared
+    ?? (ownedSharedMap[activeBrandId]
+      ? { sharedBrandId: ownedSharedMap[activeBrandId], clientBrandId: activeBrandId, name: activeBrand?.name || 'Shared brand', role: 'owner', isOwner: true }
+      : null);
+  const isSharedActive = !!activeShared;
+  const sharedWs = useSharedWorkspace(activeShared);
+
+  // Reset to Home whenever we enter or leave a shared brand — a node id from one
+  // tree is meaningless in the other.
+  useEffect(() => { setActiveNodeId('root'); }, [activeShared?.sharedBrandId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The bare identifiers used by EVERYTHING below (Sidebar/PageView/Canvas/
+  // Calendar/Feed/handlers) — shadowed once here, so no other code in this
+  // component needs to know or care which store it's reading. When no shared
+  // brand is open this is byte-for-byte the owner's normal blob path.
+  const nodes = isSharedActive ? sharedWs.nodes : ownNodes;
+  const setNodes = isSharedActive ? sharedWs.setNodes : setOwnNodes;
+  const events = isSharedActive ? sharedWs.events : ownEvents;
+  const addEvent = isSharedActive ? sharedWs.addEvent : ownAddEvent;
+  const updateEvent = isSharedActive ? sharedWs.updateEvent : ownUpdateEvent;
+  const deleteEvent = isSharedActive ? sharedWs.deleteEvent : ownDeleteEvent;
+  const handleUpdateNode = isSharedActive ? sharedWs.handleUpdateNode : ownHandleUpdateNode;
+  const handleMoveNode = isSharedActive ? sharedWs.handleMoveNode : ownHandleMoveNode;
+  const handleReorderNode = isSharedActive ? sharedWs.handleReorderNode : ownHandleReorderNode;
+  const toggleFavorite = isSharedActive ? sharedWs.toggleFavorite : ownToggleFavorite;
+  const toggleExpand = isSharedActive ? sharedWs.toggleExpand : ownToggleExpand;
+  const getSortedChildren = isSharedActive ? sharedWs.getSortedChildren : ownGetSortedChildren;
+  // Gate the "don't flash empty" spinner on whichever store is actually active.
+  const effectivelyLoaded = isSharedActive ? sharedWs.ready : nodesLoaded;
+
+  // Brand-scoped views. A shared brand's `nodes`/`events` ARE that one brand's
+  // slice already (captured via filterNodesByBrand at publish time) — filtering
+  // again by the VIEWER's own (unrelated) activeBrandId would hide everything.
+  const visibleNodes = useMemo(() => isSharedActive ? nodes : filterNodesByBrand(nodes, activeBrandId), [nodes, activeBrandId, isSharedActive]);
+  const visibleEvents = useMemo(() => isSharedActive ? events : events.filter(e => eventInBrand(e, activeBrandId)), [events, activeBrandId, isSharedActive]);
+
+  // The active brand's roster. If shared, it's the real DB roster (members +
+  // pending invites + owner); otherwise the local Phase-1 one. A member viewing
+  // someone else's shared brand has no local profile for that owner, so we omit
+  // the synthesized "owner" row rather than mislabel ourselves as it.
+  const rosterOwnerParam = activeShared && !activeShared.isOwner ? null : ownerForRoster;
+  const { roster: activeRoster, reloadRoster } = useSharedRoster({ sharedBrandId: activeShared?.sharedBrandId ?? null, localRoster, owner: rosterOwnerParam });
 
   // Update a card's content in ANY board. Active board goes through workspaces
   // state (so the canvas reflects it immediately); others patch the node tree.
@@ -166,7 +258,7 @@ export default function App() {
   // Minute tick: due targets → needs_action + notification + open the kit.
   // Idempotent (announced items are no longer 'scheduled'), so re-runs are safe.
   useEffect(() => {
-    if (!session || !onboardingComplete || !nodesLoaded) return;
+    if (!session || !onboardingComplete || !effectivelyLoaded) return;
     const tick = () => {
       const due = dueTargets(collectQueue(nodes), Date.now());
       if (due.length === 0) return;
@@ -187,61 +279,18 @@ export default function App() {
     tick();
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, onboardingComplete, nodesLoaded, nodes]);
-
-  // Brand-wide calendar events (the "marketing gantt").
-  const { events, addEvent, updateEvent, deleteEvent } = useCalendarEvents({ session, onboardingComplete });
-
-  // --- Brands (workspaces) ---
-  // One primitive: each brand owns its tree, calendar+events and feed. Views get
-  // BRAND-FILTERED data; every mutation path keeps operating on the FULL maps.
-  const { brands, activeBrandId, activeBrand, addBrand, renameBrand, updateBrandAvatar, updateBrandProfile, updateBrandFeedCadence, addBrandDraft, updateBrandDraft, removeBrandDraft, addBrandMember, updateBrandMember, removeBrandMember, switchBrand } = useBrandSpaces({
-    session, onboardingComplete,
-    fallbackName: brand?.name || userProfile?.full_name || 'My Brand',
-  });
-  const visibleNodes = useMemo(() => filterNodesByBrand(nodes, activeBrandId), [nodes, activeBrandId]);
-  const visibleEvents = useMemo(() => events.filter(e => eventInBrand(e, activeBrandId)), [events, activeBrandId]);
-  // Teams Phase 2 (owner side): publish each SHARED brand's slice to brand_data so
-  // members can read it. Purely additive — the blob save path is untouched.
-  const { sharedMap: ownedSharedMap, refresh: refreshSharedBrands } = useOwnerMirror({ session, nodesLoaded, nodes, events, brands });
-  // The active brand's roster. If the brand is SHARED, it's the real DB roster
-  // (members + pending invites + owner); otherwise the local Phase-1 one. Used by
-  // card assignees, @mentions and the Members modal.
-  const localRoster = useMemo(() => resolveRoster(activeBrand, userProfile), [activeBrand, userProfile]);
-  const activeSharedId = ownedSharedMap[activeBrandId] ?? null;
-  const ownerForRoster = useMemo(
-    () => (userProfile ? { id: userProfile.id, name: userProfile.full_name, email: userProfile.email, avatarUrl: userProfile.avatar_url } : null),
-    [userProfile],
-  );
-  const { roster: activeRoster, reloadRoster } = useSharedRoster({ sharedBrandId: activeSharedId, localRoster, owner: ownerForRoster });
-  const [membersOpen, setMembersOpen] = useState(false);
-
-  // Teams Phase 2 (member side): brands shared WITH me, and the read-only view of
-  // one when opened. Never touches my own file_system.
-  const memberBrands = useMemberBrands(session);
-  // Accept an invite link (?invite=<token>) once signed in; survive the auth hop.
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const t = url.searchParams.get('invite');
-    if (t) { try { localStorage.setItem('sosa_pending_invite', t); } catch { /* quota */ } url.searchParams.delete('invite'); window.history.replaceState({}, '', url.toString()); }
-  }, []);
-  useEffect(() => {
-    if (!session || !onboardingComplete) return;
-    let pending: string | null = null;
-    try { pending = localStorage.getItem('sosa_pending_invite'); } catch { /* */ }
-    if (!pending) return;
-    try { localStorage.removeItem('sosa_pending_invite'); } catch { /* */ }
-    memberBrands.acceptAndOpen(pending);
-  }, [session, onboardingComplete]);
+  }, [session, onboardingComplete, effectivelyLoaded, nodes]);
 
   // New brand = user-initiated: create it, seed its starter folders, go home.
   // (handleNavigate persists an open whiteboard before leaving; safe no-op otherwise.)
   const handleAddBrand = (name: string, icon?: string) => {
+    if (memberBrands.activeSharedId) memberBrands.closeShared();
     const id = addBrand(name, icon);
-    setNodes(prev => ({ ...prev, ...seedFoldersForBrand(id) }));
+    setOwnNodes(prev => ({ ...prev, ...seedFoldersForBrand(id) }));
     handleNavigate('root');
   };
   const handleSwitchBrand = (id: string) => {
+    if (memberBrands.activeSharedId) memberBrands.closeShared(); // own brand wins over "shared with me"
     switchBrand(id);
     handleNavigate('root'); // never leave the view pointing at another brand's node
   };
@@ -301,7 +350,7 @@ export default function App() {
     const id = `${type}-${Date.now()}`;
     const newNode: FileSystemNode = {
         id, type, name: 'New Folder', parentId: effectiveParentId, order: Date.now(),
-        spaceId: activeBrandId,
+        ...(isSharedActive ? {} : { spaceId: activeBrandId }),
     };
     setNodes(prev => ({ ...prev, [id]: newNode }));
   };
@@ -318,7 +367,7 @@ export default function App() {
       const id = `whiteboard-${Date.now()}`;
       const newNode: FileSystemNode = {
           id, type: 'whiteboard', name, parentId, order: Date.now(), whiteboardData: initialData,
-          spaceId: activeBrandId,
+          ...(isSharedActive ? {} : { spaceId: activeBrandId }),
       };
       setNodes(prev => ({ ...prev, [id]: newNode }));
       // Pass the freshly-built node explicitly: handleNavigate would otherwise read
@@ -375,8 +424,10 @@ export default function App() {
     // hasn't committed yet) so we never read a stale `nodes[id]`.
     const targetNode = nodeOverride ?? nodes[id];
     // Navigating into another brand's node (search, deep link) follows the node —
-    // switch the active brand so the surrounding views stay consistent.
-    if (targetNode && !nodeInBrand(targetNode, activeBrandId)) {
+    // switch the active brand so the surrounding views stay consistent. Doesn't
+    // apply inside a shared brand — that whole tree IS the one brand, no others
+    // to switch to, and activeBrandId is the VIEWER's own (unrelated) brand id.
+    if (!isSharedActive && targetNode && !nodeInBrand(targetNode, activeBrandId)) {
         switchBrand(targetNode.spaceId ?? DEFAULT_BRAND_ID);
     }
     // When opening a whiteboard, focus on the workspace that already has cards
@@ -447,18 +498,38 @@ export default function App() {
   };
 
   // --- Board chat handlers ---
-  const boardChatMessages: BoardChatMessage[] = nodes[activeNodeId]?.boardChat || [];
+  // Shared brands comment through `brand_comments` (Teams Phase 2 Round 2) — a
+  // SEPARATE write surface from brand_data, whose RLS lets a Commenter write even
+  // while every structural edit is blocked by sharedWs.readOnly. Own boards keep
+  // the original node.boardChat path untouched.
+  const sharedComments = useSharedComments(activeShared?.sharedBrandId ?? null);
+  const canCommentHere = !isSharedActive || canComment(activeShared!.role);
+  const boardChatMessages: BoardChatMessage[] = isSharedActive
+    ? sharedComments.items
+        .filter(c => c.node_id === activeNodeId)
+        .map(c => ({
+          id: c.id, text: c.text, createdAt: c.created_at,
+          user: c.author_name || 'Someone', avatar: c.author_avatar || undefined,
+          ...(c.card_id ? { cardId: c.card_id } : {}),
+          ...(c.mentions && c.mentions.length ? { mentions: c.mentions } : {}),
+          resolved: !!c.resolved,
+        }))
+    : (nodes[activeNodeId]?.boardChat || []);
 
   // Total open items (board messages + card comments) for the trigger bubble.
   const unresolvedChatCount = useMemo(() => {
     const boardCount = boardChatMessages.filter(m => !m.resolved).length;
-    const cardCount = workspaces.reduce((sum, w) =>
+    const cardCount = isSharedActive ? 0 : workspaces.reduce((sum, w) =>
       sum + w.cards.reduce((s, c) =>
         s + ((((c.content as any)?.comments || []) as Comment[]).filter(cm => !cm.resolved).length), 0), 0);
     return boardCount + cardCount;
-  }, [boardChatMessages, workspaces]);
+  }, [boardChatMessages, workspaces, isSharedActive]);
 
   const handleSendChatMessage = (text: string, cardId?: string, mentions?: string[]) => {
+    if (isSharedActive) {
+      sharedComments.send(activeNodeId, cardId, text, mentions, userProfile?.full_name || 'You', userProfile?.avatar_url);
+      return;
+    }
     const msg: BoardChatMessage = {
       id: `msg-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
       text,
@@ -472,6 +543,7 @@ export default function App() {
   };
 
   const handleToggleResolveMessage = (id: string) => {
+    if (isSharedActive) { sharedComments.toggleResolved(id); return; }
     const list = nodes[activeNodeId]?.boardChat || [];
     handleUpdateNode(activeNodeId, { boardChat: list.map(m => m.id === id ? { ...m, resolved: !m.resolved } : m) });
   };
@@ -523,7 +595,8 @@ export default function App() {
 
   // --- Displayed node + children (depends on active selection) ---
   // All listings are scoped to the ACTIVE BRAND (nodes without spaceId = default brand).
-  const inBrand = (n: FileSystemNode) => nodeInBrand(n, activeBrandId);
+  // A shared brand's `nodes` are ALREADY exactly-and-only that brand's slice.
+  const inBrand = (n: FileSystemNode) => isSharedActive ? true : nodeInBrand(n, activeBrandId);
   let displayedNode: FileSystemNode;
   let displayedChildren: FileSystemNode[] = [];
 
@@ -666,30 +739,18 @@ export default function App() {
     return <RegisterForm onLoginClick={() => setAuthView('login')} />;
   }
   if (!onboardingComplete) return <OnboardingFlow userId={session.user.id} onComplete={() => setOnboardingComplete(true)} />;
-  // Wait for the initial nodes load so we never flash an empty home page.
-  if (!nodesLoaded) return <div className="h-screen w-full flex items-center justify-center bg-[#F9F8F6]"><Loader2 size={32} className="text-[#3A5C34] animate-spin" /></div>;
+  // Wait for the initial load of whichever store is active (own blob or shared
+  // brand) so we never flash an empty home page.
+  if (!effectivelyLoaded) return <div className="h-screen w-full flex items-center justify-center bg-[#F9F8F6]"><Loader2 size={32} className="text-[#3A5C34] animate-spin" /></div>;
 
-  // --- SHARED BRAND (member, read-only) — replaces the app while open ---
-  if (memberBrands.activeSharedId) {
-    if (!memberBrands.sharedData || !memberBrands.activeShared) {
-      return <div className="h-screen w-full flex items-center justify-center bg-[#F9F8F6]"><Loader2 size={32} className="text-[#3A5C34] animate-spin" /></div>;
-    }
-    return (
-      <SharedBrandView
-        shared={memberBrands.activeShared}
-        data={memberBrands.sharedData}
-        me={{ name: userProfile?.full_name || 'You', avatarUrl: userProfile?.avatar_url }}
-        onExit={memberBrands.closeShared}
-      />
-    );
-  }
-
-  // --- MAIN APP ---
+  // --- MAIN APP --- (a shared brand renders here too — same Home/Canvas/
+  // Calendar/Feed, just fed from the shared store, with a context banner + role
+  // gating via readOnly. See useSharedWorkspace.)
   return (
     <BrandIdentityProvider value={{
-      brandName: activeBrand?.name || brand?.name || userProfile?.full_name || 'Your brand',
-      avatarUrl: activeBrand?.avatarUrl || (activeBrandId === DEFAULT_BRAND_ID ? (brand?.logo_url || userProfile?.avatar_url) : undefined),
-      socialProfiles: activeBrand?.socialProfiles,
+      brandName: (isSharedActive ? sharedWs.brand?.name : undefined) || activeBrand?.name || brand?.name || userProfile?.full_name || 'Your brand',
+      avatarUrl: isSharedActive ? sharedWs.brand?.avatarUrl : (activeBrand?.avatarUrl || (activeBrandId === DEFAULT_BRAND_ID ? (brand?.logo_url || userProfile?.avatar_url) : undefined)),
+      socialProfiles: isSharedActive ? sharedWs.brand?.socialProfiles : activeBrand?.socialProfiles,
       members: activeRoster,
     }}>
     <div className="flex w-full h-screen bg-white text-[#1C1C1E] overflow-hidden font-sans">
@@ -702,7 +763,6 @@ export default function App() {
           Can’t reach the server — retrying. Keep this tab open.
         </div>
       )}
-
 
       {/* Sidebar (Main Navigation) */}
       {isSidebarOpen && !isWhiteboardMode && (
@@ -718,6 +778,12 @@ export default function App() {
           onOpenMembers={() => setMembersOpen(true)}
           sharedWithMe={memberBrands.sharedWithMe}
           onOpenSharedBrand={memberBrands.openShared}
+          viewingSharedBrand={memberBrands.activeShared ? {
+            sharedBrandId: memberBrands.activeShared.sharedBrandId,
+            name: sharedWs.brand?.name || memberBrands.activeShared.name,
+            avatarUrl: sharedWs.brand?.avatarUrl,
+            role: memberBrands.activeShared.role,
+          } : null}
           onRenameBrand={renameBrand}
           onUpdateBrandAvatar={updateBrandAvatar}
           onNavigate={handleNavigate}
@@ -755,6 +821,7 @@ export default function App() {
                         onJumpToCard={handleJumpToCard}
                         onClose={() => setIsChatOpen(false)}
                         members={activeRoster}
+                        canComment={canCommentHere}
                       />
                     </div>
                   </div>
@@ -784,7 +851,7 @@ export default function App() {
                     connectors={connectors}
                     onConnectorsChange={updateConnectors}
                     showConnectors={showConnectors}
-                    readOnly={!!activeWorkspace?.isLocked}
+                    readOnly={!!activeWorkspace?.isLocked || (isSharedActive && sharedWs.readOnly)}
                     onOpenComments={handleOpenComments}
                 />
 
@@ -1038,7 +1105,7 @@ export default function App() {
                 nodes={visibleNodes}
                 onNavigate={handleNavigate}
                 events={visibleEvents}
-                onAddEvent={(data) => addEvent({ ...data, spaceId: activeBrandId })}
+                onAddEvent={(data) => addEvent(isSharedActive ? data : { ...data, spaceId: activeBrandId })}
                 onUpdateEvent={updateEvent}
                 onDeleteEvent={deleteEvent}
                 onUpdateCard={handleUpdateCardById}

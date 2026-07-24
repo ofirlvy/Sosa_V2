@@ -1406,27 +1406,31 @@ export const Canvas: React.FC<CanvasProps> = ({
     return getSlotDate(linked.grid.content as GridPlannerContent, linked.slotIndex);
   };
 
+  const noop = () => {};
   const renderCard = (card: CardData) => {
+    // A single gate for every card type: when readOnly (a viewer/commenter on a
+    // shared brand), every mutation becomes a no-op here — one place instead of
+    // threading readOnly into ~20 card components. Viewing/expanding still works.
     const commonProps = {
       card,
       isSelected: selectedCardIds.includes(card.id),
       onSelect: bringToFront,
-      onMove: moveCardAbsolute,
-      onDragMove: handleDragMove,
-      onDragCommit: handleDragCommit,
+      onMove: readOnly ? noop : moveCardAbsolute,
+      onDragMove: readOnly ? noop : handleDragMove,
+      onDragCommit: readOnly ? noop : handleDragCommit,
       dragOffset: dragState && dragState.ids.includes(card.id)
         ? { x: dragState.dx, y: dragState.dy }
         : undefined,
-      onDelete: handleDeleteCard,
-      onUpdateContent: updateCardContent,
-      onResize: updateCardGeometry,
-      onContextMenu: handleCardContextMenu,
-      onToggleLock: handleToggleLockById,
+      onDelete: readOnly ? noop : handleDeleteCard,
+      onUpdateContent: readOnly ? noop : updateCardContent,
+      onResize: readOnly ? noop : updateCardGeometry,
+      onContextMenu: readOnly ? undefined : handleCardContextMenu,
+      onToggleLock: readOnly ? noop : handleToggleLockById,
       isMultiSelect: selectedCardIds.length > 1,
       zoomScale: scale,
       isExpanded: expandedCardId === card.id,
       onExpand: handleExpand,
-      onDragCancel: handleDragCancel,
+      onDragCancel: readOnly ? noop : handleDragCancel,
       isFullscreen: fullscreenCardId === card.id,
       onFullscreenChange: handleFullscreenChange,
       onOpenComments

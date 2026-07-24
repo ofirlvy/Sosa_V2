@@ -1,9 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FileSystemNode, NodeType, UserProfile, Brand, BrandSpace } from '../types';
+import { FileSystemNode, NodeType, UserProfile, Brand, BrandSpace, BrandRole } from '../types';
 import { soundService } from '../services/soundService';
 import { signOut } from '../services/supabase';
 import { beginMediaUpload, isWithinMediaLimit, mediaLimitMessage } from '../services/fileService';
+import { ROLE_LABEL, ROLE_HINT } from '../services/brandMembers';
 import { SettingsModal } from './modals/SettingsModal';
 import {
   ChevronRight,
@@ -48,6 +49,10 @@ interface SidebarProps {
   onOpenMembers?: () => void;
   sharedWithMe?: { sharedBrandId: string; name: string; role: string }[];
   onOpenSharedBrand?: (sharedBrandId: string) => void;
+  /** Set only while VIEWING a brand shared with me (not my own, even if it's also
+   *  shared) — overrides the compact header's identity so it reads as the brand
+   *  you're actually looking at, not your own account. */
+  viewingSharedBrand?: { sharedBrandId: string; name: string; avatarUrl?: string; role: string } | null;
   onRenameBrand?: (id: string, name: string) => void;
   onUpdateBrandAvatar?: (id: string, avatarUrl: string) => void;
   onNavigate: (id: string) => void;
@@ -77,6 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenMembers,
   sharedWithMe = [],
   onOpenSharedBrand,
+  viewingSharedBrand = null,
   onRenameBrand,
   onUpdateBrandAvatar,
   onNavigate,
@@ -168,10 +174,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const avatarUrl = userProfile?.avatar_url || brand?.logo_url;
   const initials = displayName.substring(0, 2).toUpperCase();
 
-  const brandDisplayName = activeBrandSpace?.name || brand?.name || 'My Brand';
+  // While viewing a brand someone else shared with me, the header identity is
+  // THAT brand's — never my own account/brand (they're unrelated to it).
+  const brandDisplayName = viewingSharedBrand?.name || activeBrandSpace?.name || brand?.name || 'My Brand';
   // Priority: uploaded avatar > (default brand's onboarding logo) > emoji icon > initials.
   const brandAvatarSrc = (b?: BrandSpace): string | undefined =>
     b?.avatarUrl || (b?.id === 'default' ? brand?.logo_url : undefined);
+  const headerAvatarSrc = viewingSharedBrand ? viewingSharedBrand.avatarUrl : brandAvatarSrc(activeBrandSpace);
 
   const submitNewBrand = () => {
     const name = newBrandName.trim();
@@ -502,13 +511,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* A real logo gets a plain light surface — the green gradient exists
                 for white initials, and behind a dark transparent PNG it reads as
                 a murky layer over the picture. */}
-            <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[12px] font-bold overflow-hidden shrink-0 ${brandAvatarSrc(activeBrandSpace) ? 'bg-white' : 'bg-gradient-to-br from-[#3A5C34] to-[#2d4a29] text-white shadow-sm'}`}>
-              {brandAvatarSrc(activeBrandSpace) ? <img src={brandAvatarSrc(activeBrandSpace)} alt="Brand" className="w-full h-full object-cover" />
-                : activeBrandSpace?.icon ? <span className="text-[16px]">{activeBrandSpace.icon}</span>
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[12px] font-bold overflow-hidden shrink-0 ${headerAvatarSrc ? 'bg-white' : 'bg-gradient-to-br from-[#3A5C34] to-[#2d4a29] text-white shadow-sm'}`}>
+              {headerAvatarSrc ? <img src={headerAvatarSrc} alt="Brand" className="w-full h-full object-cover" />
+                : !viewingSharedBrand && activeBrandSpace?.icon ? <span className="text-[16px]">{activeBrandSpace.icon}</span>
                 : <span>{brandDisplayName.substring(0, 2).toUpperCase()}</span>}
             </div>
             <div className="flex-1 text-left min-w-0">
-              {editingBrandId === activeBrandSpace?.id ? (
+              {editingBrandId === activeBrandSpace?.id && !viewingSharedBrand ? (
                 <input
                   ref={editBrandInputRef}
                   value={editBrandValue}
@@ -521,7 +530,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  onDoubleClick={(e) => { e.stopPropagation(); if (activeBrandSpace) startBrandRename(activeBrandSpace); }}
+                  onDoubleClick={(e) => { e.stopPropagation(); if (!viewingSharedBrand && activeBrandSpace) startBrandRename(activeBrandSpace); }}
                   className="text-[14px] font-bold text-[#5F2427] leading-tight truncate"
                 >
                   {brandDisplayName}
@@ -625,19 +634,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {sharedWithMe.length > 0 && (
               <div className="pt-1.5 mt-1.5 border-t border-[#F9E6D1]/10">
                 <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-[#F9E6D1]/40">Shared with me</div>
-                {sharedWithMe.map(s => (
-                  <button
-                    key={s.sharedBrandId}
-                    onClick={(e) => { e.stopPropagation(); setShowBrandMenu(false); onOpenSharedBrand?.(s.sharedBrandId); }}
-                    className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9E6D1]/10 text-left transition-colors"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-[#F9E6D1]/10 text-[#F9E6D1]/70 flex items-center justify-center shrink-0"><Eye size={13} /></div>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-[#F9E6D1]/90 truncate">{s.name}</span>
-                      <span className="block text-[10px] text-[#F9E6D1]/40 capitalize">{s.role} · view only</span>
-                    </span>
-                  </button>
-                ))}
+                {sharedWithMe.map(s => {
+                  const isActive = viewingSharedBrand?.sharedBrandId === s.sharedBrandId;
+                  const role = (s.role as BrandRole) || 'viewer';
+                  return (
+                    <button
+                      key={s.sharedBrandId}
+                      onClick={(e) => { e.stopPropagation(); setShowBrandMenu(false); onOpenSharedBrand?.(s.sharedBrandId); }}
+                      className={`w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9E6D1]/10 text-left transition-colors ${isActive ? 'bg-[#F9E6D1]/10' : ''}`}
+                    >
+                      <div className="w-7 h-7 rounded-lg bg-[#F9E6D1]/10 text-[#F9E6D1]/70 flex items-center justify-center shrink-0">
+                        {role === 'editor' ? <Pencil size={13} /> : role === 'commenter' ? <UserIcon size={13} /> : <Eye size={13} />}
+                      </div>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-semibold text-[#F9E6D1]/90 truncate">{s.name}</span>
+                        <span className="block text-[10px] text-[#F9E6D1]/40">{ROLE_LABEL[role]} · {ROLE_HINT[role]}</span>
+                      </span>
+                      {isActive && <Check size={14} className="text-[#F9E6D1] shrink-0" />}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

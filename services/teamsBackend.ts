@@ -12,9 +12,6 @@ const uid = async (): Promise<string | null> => {
   return session?.user?.id ?? null;
 };
 
-const token = () =>
-  (crypto.randomUUID().replace(/-/g, '') + Math.random().toString(36).slice(2)).slice(0, 28);
-
 // The data slice an owner publishes for one shared brand (its nodes + events + meta).
 export interface SharedBrandData {
   nodes: Record<string, FileSystemNode>;
@@ -60,9 +57,7 @@ export const ensureSharedBrand = async (clientBrandId: string, name: string): Pr
   return (data as any)?.id ?? null;
 };
 
-/** Create or refresh an email-bound invite through an owner-validated RPC.
- * This avoids browser-side RLS ordering failures while keeping ownership checks
- * inside Postgres. The token remains available as an optional fallback link. */
+/** Create or refresh an email-bound invite through an owner-validated RPC. */
 export const createEmailInvite = async (
   clientBrandId: string,
   brandName: string,
@@ -70,7 +65,7 @@ export const createEmailInvite = async (
   role: BrandRole,
 ): Promise<{ sharedBrandId: string; token: string } | null> => {
   const normalizedEmail = email.trim().toLowerCase();
-  const inviteRole: BrandRole = role === 'viewer' ? 'viewer' : 'commenter';
+  const inviteRole: BrandRole = role === 'editor' || role === 'viewer' ? role : 'commenter';
   const { data, error } = await supabase.rpc('create_brand_email_invite', {
     p_client_brand_id: clientBrandId,
     p_brand_name: brandName,
@@ -135,11 +130,7 @@ export const revokeInvite = async (inviteId: string): Promise<boolean> => {
 
 // ---------------------------------------------------------------- MEMBER
 
-/**
- * Claim every pending invite whose normalized email matches the authenticated
- * user's verified Supabase email. The RPC derives both identity and email from
- * auth; the browser never gets to choose which email to claim.
- */
+/** Claim pending invitations matching the authenticated user's verified email. */
 export const claimInvitesForSignedInEmail = async (): Promise<boolean> => {
   const { error } = await supabase.rpc('claim_brand_invites_by_email');
   if (error) { console.error('claimInvitesForSignedInEmail:', error.message); return false; }
@@ -151,8 +142,6 @@ export const claimInvitesForSignedInEmail = async (): Promise<boolean> => {
 export const listMySharedBrands = async (): Promise<SharedBrandRef[]> => {
   const me = await uid();
   if (!me) return [];
-  // Safe to run repeatedly: the server function is idempotent and only claims
-  // invitations for the email embedded in this signed-in user's JWT.
   await claimInvitesForSignedInEmail();
   const { data: brands, error } = await supabase
     .from('shared_brands')
@@ -191,6 +180,28 @@ export const loadBrandData = async (sharedBrandId: string): Promise<SharedBrandD
   if (error) { console.error('loadBrandData:', error.message); return null; }
   return ((data as any)?.data as SharedBrandData) ?? null;
 };
+
+// Discriminated load — the safety shape used by the shared-workspace store, so a
+// transient network/RLS error NEVER looks like "empty" and clobbers real data.
+export type BrandDataResult =
+  | { status: 'ok'; data: SharedBrandData }
+  | { status: 'empty' }
+  | { status: 'error' };
+
+export const loadBrandDataResult = async (sharedBrandId: string): Promise<BrandDataResult> => {
+  const { data, error } = await supabase
+    .from('brand_data')
+    .select('data')
+    .eq('shared_brand_id', sharedBrandId)
+    .maybeSingle();
+  if (error) { console.error('loadBrandDataResult:', error.message); return { status: 'error' }; }
+  const d = (data as any)?.data as SharedBrandData | undefined;
+  return d ? { status: 'ok', data: d } : { status: 'empty' };
+};
+
+/** Editor/owner write to the shared store (RLS gates it to can_edit_brand). Same
+ *  upsert as the owner mirror — Round 2 makes brand_data a shared read-WRITE store. */
+export const saveBrandData = publishBrandData;
 
 export const loadComments = async (sharedBrandId: string): Promise<BrandCommentRow[]> => {
   const { data, error } = await supabase

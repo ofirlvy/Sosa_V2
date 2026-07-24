@@ -3,7 +3,52 @@
 > **What this file is:** the live picture of *exactly* what we're working on right now. `PROGRESS.md` = full history; **this file = focused "what's next".**
 > **New chat?** Read `PROGRESS.md` + project memory + this file + the plan at `~/.claude/plans/enumerated-percolating-hennessy.md`.
 
-_Last updated: 2026-07-23 — Teams Phase 2 (Round 1): real cross-user brand sharing, view+comment, owner-authoritative (DONE; verify=0 errors, 168 tests; schema live; 2-account test pending user)_
+_Last updated: 2026-07-24 — Fixed intermittent "video shows thumbnail but never plays" in the mockups: hardened MockupVideo (muted-first autoplay + event-driven retries, never gives up, upgrades to sound). Zero data touched. (DONE; verify=0 errors, 168 tests; browser-verified)_
+
+## 🆕 2026-07-24 (38) — Fix intermittent video-won't-play in mockups — DONE
+- [x] **Root cause (proven, not guessed):** files are healthy H.264/AAC (probed the real bytes); the bug was `MockupVideo` trying UNMUTED play first and permanently `setPlaying(false)` if either attempt got interrupted during the ~2s these trailing-moov files buffer → frozen poster, no video.
+- [x] **Fix:** `components/media/MockupVideo.tsx` now starts muted (guaranteed autoplay), retries on every readiness event, never gives up, one reload on real error, upgrades to sound on `playing` (sound-on default preserved); manual mute sticks.
+- [x] **Zero data risk:** pure playback logic — no writes/deletes to any media or URL. Existing user videos untouched.
+- [x] verify=0, 168 tests; browser-verified against the real `.mov` (played, unmuted, advancing).
+- [ ] **User check:** open several post/reel/story mockups with videos (incl. the ones that used to fail) → each shows the frame then starts playing within a couple seconds, with sound; tap toggles play/pause; mute pill works and sticks. Nothing that used to play regressed.
+
+## 🆕 2026-07-24 (37) — Teams Phase 2 Round 2 polish: sidebar identity + drop floating banner — DONE
+- [x] **Sidebar header shows the SHARED BRAND's identity**, not your own account, while viewing a brand shared with you — new `viewingSharedBrand` prop overrides name/avatar/initials (only for the member-viewing-someone-else's-brand case; the owner's-own-shared-brand case already showed correctly).
+- [x] **Removed the floating "Editing as partner / Exit" banner** — redundant, switching brands already happens via the sidebar dropdown.
+- [x] **Fixed "Shared with me" dropdown row** — real `ROLE_LABEL`/`ROLE_HINT` instead of hardcoded "view only", role-appropriate icon, checkmark on the currently-open one.
+- [x] Files: `components/Sidebar.tsx`, `App.tsx`. verify=0, 168 tests; browser smoke clean.
+
+## 🆕 2026-07-24 (36) — Teams Phase 2 Round 2: full-partner roles (Viewer/Commenter/Editor) — DONE (schema live)
+- [x] **Schema (applied directly by Claude via Management API, user-supplied fresh PAT):** `can_edit_brand(uuid)` helper; `brand_data` write policies (`bd_insert`/`bd_update`) → owner-OR-editor; `brand_data_history` table+trigger (recovery net, mirrors `sosa_data_history`); index on `brand_comments(shared_brand_id,node_id,card_id)`. `sosa_data`/`profiles`/`brands` untouched. Verified live (policies/functions/table/trigger all confirmed via `pg_policies`/`pg_proc`/`pg_tables`/`pg_trigger`).
+- [x] **`hooks/useSharedWorkspace.ts`** — the brand_data-backed twin of `useFileSystem`+`useCalendarEvents` (discriminated load, gated+debounced save, cache, flush-on-close, never saves `{}`); every writer no-ops when `readOnly` (viewer/commenter).
+- [x] **App.tsx rewired** — one `activeShared` computation (member's open shared brand, or owner's own brand-switcher landing on a shared brand) shadows `nodes/setNodes/events/addEvent/handleUpdateNode/toggleFavorite/getSortedChildren/...` ONCE; the rest of the file (Sidebar/PageView/Canvas/Calendar/Feed/handleNavigate/handleCreateNode) is automatically shared-aware with zero further changes, and is byte-for-byte the original path when no shared brand is open. Deleted the feed-only `SharedBrandView` — a shared brand now opens the **real app** (Home + every board + Calendar + Feed), read-only or editable per role, with a context banner.
+- [x] **`useOwnerMirror`** — changed from continuous push to seed-once-at-share, so it can never clobber a live editor's writes.
+- [x] **Canvas `commonProps` gate** — one place (`onMove/onDelete/onUpdateContent/onResize/onToggleLock/onContextMenu` → no-op when `readOnly`) instead of touching ~20 card components.
+- [x] **Card-anchored comments** — new `hooks/useSharedComments.ts` feeds the *existing* `BoardChatDrawer` (its `+`/`/` card-picker already lets you reference a post/reel/story) via `brand_comments` (separate RLS from `brand_data` — commenter+ can always comment even when structural edits are blocked). `BoardChatDrawer` got a `canComment` prop (hides composer for Viewer).
+- [x] **Caught + fixed pre-ship:** a first draft would have made `readOnly` apply to the WHOLE app (even non-shared use) — caught by re-reading the diff before verify, fixed to gate on `isSharedActive` too.
+- [x] verify=0 errors, 168 tests; typecheck clean; browser smoke (loaded app, zero console errors).
+- [ ] **The real 2-account test (user's job — I can't sign in as a second account):**
+  1. Owner shares a brand as **Editor** with a second account → member opens "Shared with me" → sees the **same Home/boards/Calendar/Feed** as the owner (not just a feed screen).
+  2. Member **edits** a card on a board / adds a calendar event / reschedules a feed slot → owner sees it **live** (no refresh) — and vice versa, owner edits reach the member live.
+  3. Owner downgrades the member's role to **Viewer** → member's UI instantly becomes read-only (composer hidden, dragging/editing no-ops).
+  4. As **Commenter**, use the chat composer's `+`/`/` picker to reference a specific post/reel/story → the comment shows the right card chip; clicking it jumps to that card; owner sees the comment live.
+  5. Confirm in Supabase that `sosa_data` for the owner's account never changed, and `brand_data`/`brand_data_history`/`brand_comments` are the ones filling up.
+
+## 🆕 2026-07-24 (35) — Feed polish (grid + stories lane) — DONE
+- [x] **Uncut pencil/flag** — `StoriesLane` scroller padding `px-2 py-2` (was `pb-1`); decorations no longer clip.
+- [x] **Auto-scrolling stories lane** — gentle rAF ping-pong (~21px/s); pauses on hover (freezes at the mouse), while dragging, when no overflow, and under reduced-motion.
+- [x] **Clickable calendar events → `EventDetailsModal`** — a `Flag` marker on any event day (grid slot + story circle) and the grid event chips open a read-only details modal (category/title/dates/description/owner/important/meta).
+- [x] **Empty-slot picker `SlotPickerModal`** — clicking an empty feed slot / story circle opens a kind-filtered picker (posts vs stories) to schedule an unscheduled item onto that day; the **Unscheduled** toolbar button still opens the drawer.
+- [x] **Story day-drag (swap)** — drag a filled story circle onto another day to swap their stories' dates (`placeMany`), like the grid swap.
+- [x] Files: `StoriesLane.tsx`, `FeedPlannerView.tsx`, new `modals/EventDetailsModal.tsx` + `modals/SlotPickerModal.tsx`. verify=0, 168 tests, smoke 200. Scratch harness deleted.
+
+### 🔵 Browser checklist (for the user)
+1. Feed → hover a story circle → pencil + count badge + event flag are **not clipped**.
+2. A day with a calendar event shows a red flag (grid + stories) → click it → **event details** popup.
+3. Click an **empty** feed slot → picker of unscheduled posts; click an **empty** story circle → picker of unscheduled stories; pick one → it schedules onto that day (drawer does NOT open).
+4. The stories strip drifts slowly; hovering it stops it exactly where the mouse is.
+5. Drag a filled story circle onto another day → the two days' stories swap dates. reload keeps it.
+
 
 ## 🆕 2026-07-23 (34) — Teams Phase 2 Round 1: real cross-user sharing (view + comment) — DONE (schema live)
 - [x] **Schema live** (ran in SQL Editor, verified): `shared_brands`, `brand_members`, `brand_invites`, `brand_data`, `brand_comments` + RLS + `accept_brand_invite` RPC + realtime. `sosa_data`/`profiles`/`brands` untouched.

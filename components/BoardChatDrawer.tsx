@@ -40,6 +40,8 @@ interface BoardChatDrawerProps {
   onClose: () => void;
   /** The active brand's roster — for @mentions. */
   members?: BrandMember[];
+  /** false for a Viewer on a shared brand — hides the composer (read-only). */
+  canComment?: boolean;
 }
 
 const cardTypeIcon = (type: CardType, size = 13) => {
@@ -78,7 +80,8 @@ const initials = (name: string) =>
 
 export const BoardChatDrawer: React.FC<BoardChatDrawerProps> = ({
   workspaces, messages, filter, onFilterChange, onSend,
-  onToggleResolveMessage, onToggleResolveCardComment, onJumpToCard, onClose, members = []
+  onToggleResolveMessage, onToggleResolveCardComment, onJumpToCard, onClose, members = [],
+  canComment = true,
 }) => {
   const [draft, setDraft] = useState('');
   const [attachedCardId, setAttachedCardId] = useState<string | null>(null);
@@ -308,6 +311,11 @@ export const BoardChatDrawer: React.FC<BoardChatDrawerProps> = ({
       </div>
 
       {/* Composer */}
+      {!canComment ? (
+        <div className="shrink-0 p-3 border-t border-gray-100 text-center text-[12px] text-gray-400">
+          You have view-only access
+        </div>
+      ) : (
       <div className="shrink-0 p-3 border-t border-gray-100 relative">
         {/* Card picker overlay */}
         {pickerOpen && (
@@ -422,6 +430,7 @@ export const BoardChatDrawer: React.FC<BoardChatDrawerProps> = ({
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 };

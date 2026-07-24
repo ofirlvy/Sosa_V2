@@ -30,22 +30,74 @@ export const MockupVideo: React.FC<MockupVideoProps> = ({
   startMuted = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [muted, setMuted] = useState(startMuted);
+  // ALWAYS start muted: muted autoplay is the only kind browsers never block, so
+  // the video is guaranteed to actually play. Sound (the default) is turned on a
+  // moment later, once it's rolling — see the effect. This is what makes playback
+  // reliable: the old code tried UNMUTED first and gave up permanently if either
+  // attempt was interrupted (a re-render / slide switch during the ~2s these
+  // trailing-moov files take to buffer) — leaving a frozen poster and no video.
+  const [muted, setMuted] = useState(true);
   const [playing, setPlaying] = useState(true);
+  // The user's intent for sound; separate from the transient `muted` state so a
+  // manual mute isn't undone by the auto-unmute.
+  const wantSoundRef = useRef(!startMuted);
+  wantSoundRef.current = !startMuted;
 
-  // Browsers only allow UNMUTED autoplay when the page has user activation.
-  // Opening this modal is a click, so it normally succeeds — but if the browser
-  // still refuses, fall back to muted playback rather than showing a dead frame.
+  // Self-healing playback: keep trying to play whenever the element becomes ready,
+  // and NEVER permanently give up. Once it's actually playing, upgrade to sound.
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || startMuted) return;
-    v.muted = false;
-    v.play().catch(() => {
-      v.muted = true;
-      setMuted(true);
-      v.play().catch(() => setPlaying(false));
-    });
-  }, [src, startMuted]);
+    if (!v) return;
+    let cancelled = false;
+    v.muted = true;
+    setMuted(true);
+
+    const tryPlay = () => { if (!cancelled) v.play().catch(() => { /* not ready yet; a ready-event will retry */ }); };
+
+    // Any of these fire as data arrives on a slow, trailing-moov file — retry then.
+    const onReady = () => { if (!cancelled && v.paused) tryPlay(); };
+    const onPlaying = () => {
+      if (cancelled) return;
+      setPlaying(true);
+      // Turn sound on now that playback is established. Unmuting a PLAYING element
+      // needs no user activation, so this doesn't risk pausing it — but if some
+      // strict browser still balks, revert to muted (audible-less, but playing).
+      if (wantSoundRef.current && v.muted) {
+        v.muted = false;
+        setMuted(false);
+        window.setTimeout(() => {
+          if (cancelled) return;
+          if (v.paused) { v.muted = true; setMuted(true); tryPlay(); }
+        }, 60);
+      }
+    };
+    const onPause = () => { if (!cancelled) setPlaying(false); };
+    // A real load error (rare for these H.264 files) — try one clean reload.
+    let reloaded = false;
+    const onError = () => {
+      if (cancelled || reloaded) return;
+      reloaded = true;
+      try { v.load(); tryPlay(); } catch { /* give the poster the last word */ }
+    };
+
+    v.addEventListener('loadeddata', onReady);
+    v.addEventListener('canplay', onReady);
+    v.addEventListener('canplaythrough', onReady);
+    v.addEventListener('playing', onPlaying);
+    v.addEventListener('pause', onPause);
+    v.addEventListener('error', onError);
+    tryPlay(); // kick it off immediately (no-op if data isn't ready; ready-events retry)
+
+    return () => {
+      cancelled = true;
+      v.removeEventListener('loadeddata', onReady);
+      v.removeEventListener('canplay', onReady);
+      v.removeEventListener('canplaythrough', onReady);
+      v.removeEventListener('playing', onPlaying);
+      v.removeEventListener('pause', onPause);
+      v.removeEventListener('error', onError);
+    };
+  }, [src]);
   // Center glyph that fades out after each play/pause toggle (IG behavior).
   const [glyph, setGlyph] = useState<'play' | 'pause' | null>(null);
   const glyphTimer = useRef<number | null>(null);
@@ -81,6 +133,9 @@ export const MockupVideo: React.FC<MockupVideoProps> = ({
     const v = videoRef.current;
     if (!v) return;
     const next = !muted;
+    // A manual mute choice sticks — don't let the auto-unmute (on the next
+    // `playing` event, e.g. after a tap-pause-tap-play) override it.
+    wantSoundRef.current = !next;
     v.muted = next;
     setMuted(next);
     // Unmuting a tab-autoplayed video should also ensure it's actually playing.
@@ -106,8 +161,10 @@ export const MockupVideo: React.FC<MockupVideoProps> = ({
         poster={poster}
         className={`absolute inset-0 w-full h-full ${fitClass}`}
         autoPlay
-        // `muted` is driven imperatively (see the effect above) so the sound-on
-        // default can fall back to muted when the browser blocks autoplay.
+        // Start muted so the browser's OWN autoplay (before our effect runs) is
+        // never policy-blocked; the effect keeps it in sync and upgrades to sound
+        // once playing. Reliable playback first, sound-on a beat later.
+        muted={muted}
         loop
         playsInline
         // 'auto', not 'metadata': these files carry their moov atom at the end,

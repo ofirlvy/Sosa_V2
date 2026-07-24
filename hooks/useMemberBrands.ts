@@ -22,8 +22,8 @@ export function useMemberBrands(session: any) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // If an owner grants access while the invitee is already signed in, pick it up
-  // without requiring an invite link or a full page reload.
+  // Pick up access granted while this user is already signed in, without
+  // requiring an invite email, link, or full reload.
   useEffect(() => {
     if (!userId) return;
     const onFocus = () => refresh();

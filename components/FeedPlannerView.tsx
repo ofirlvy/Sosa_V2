@@ -16,6 +16,8 @@ import { getEventConfig } from './modals/EventModal';
 import { InstagramPreviewModal } from './modals/InstagramPreviewModal';
 import { ReelsPreviewModal } from './modals/ReelsPreviewModal';
 import { StoryPreviewModal } from './modals/StoryPreviewModal';
+import { EventDetailsModal } from './modals/EventDetailsModal';
+import { SlotPickerModal } from './modals/SlotPickerModal';
 import { FeedProfilePreview } from './FeedProfilePreview';
 import { StoriesLane } from './StoriesLane';
 import { resolveMockupProfile } from '../services/mockupProfile';
@@ -108,6 +110,11 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
   const [storyPreview, setStoryPreview] = useState<CardData | null>(null);
   // Editing a card's real editor in fullscreen, straight from the Feed page.
   const [editing, setEditing] = useState<FeedItem | null>(null);
+  // Clicking an event marker → read-only details; clicking an empty slot → picker.
+  const [eventDay, setEventDay] = useState<string | null>(null);
+  const [slotPicker, setSlotPicker] = useState<{ iso: string; kind: 'feed' | 'story' } | null>(null);
+  // Day→day story drag (swap dates), like the grid's post swap.
+  const [storyDragFromISO, setStoryDragFromISO] = useState<string | null>(null);
   // Drafts (saved monthly plans). null = Live (the real schedule). A loaded
   // draft renders/edits an OVERLAY without touching the posts until "Set as final".
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -195,6 +202,23 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
     [items, storyItems, showStories, getDate],
   );
 
+  // Split sources by kind so the empty-slot picker offers the relevant items.
+  const feedSources = useMemo(() => sources.filter(i => i.card.type !== CardType.STORY), [sources]);
+  const storySources = useMemo(() => sources.filter(i => i.card.type === CardType.STORY), [sources]);
+
+  // Days in the visible month that carry a calendar event → a clickable flag.
+  const eventDaysSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const ev of events) {
+      const start = parseISODate(ev.startDate);
+      const end = ev.endDate && ev.endDate >= ev.startDate ? parseISODate(ev.endDate) : start;
+      for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        if (d.getMonth() === month && d.getFullYear() === year) s.add(toISODate(d));
+      }
+    }
+    return s;
+  }, [events, month, year]);
+
   // Calendar events that cover a given date (multi-day aware).
   const eventsOnDate = (iso: string): CalendarEvent[] =>
     events
@@ -278,8 +302,25 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
   };
 
   // --- Story lane -----------------------------------------------------------
-  const storyDragActive = !!dragItem && dragItem.card.type === CardType.STORY;
+  // The lane is a live drop target when a story is dragged from the tray OR when
+  // a filled day is being dragged to another day (swap).
+  const storyDragActive = (!!dragItem && dragItem.card.type === CardType.STORY) || storyDragFromISO !== null;
   const dropStoryOnDay = (iso: string) => {
+    // Day → day: swap every story of the source day with the target day's.
+    if (storyDragFromISO !== null) {
+      if (storyDragFromISO !== iso) {
+        const from = storyGroups.find(g => g.iso === storyDragFromISO)?.items || [];
+        const to = storyGroups.find(g => g.iso === iso)?.items || [];
+        placeMany([
+          ...from.map(it => ({ item: it, date: iso })),
+          ...to.map(it => ({ item: it, date: storyDragFromISO })),
+        ]);
+      }
+      setStoryDragFromISO(null);
+      setDropTargetISO(null);
+      return;
+    }
+    // Tray → day: schedule the dragged story onto that day.
     if (!dragItem || dragItem.card.type !== CardType.STORY) return;
     place(dragItem, iso); // Live → post.content.date; draft → overlay
     endDrag();
@@ -351,27 +392,28 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
   const renderEventStrip = (iso: string) => {
     const evs = eventsOnDate(iso);
     if (evs.length === 0) return null;
+    const open = (e: React.MouseEvent) => { e.stopPropagation(); setEventDay(iso); };
     return (
-      <div className="absolute top-0 left-0 right-0 z-10 p-1 pointer-events-none">
+      <div className="absolute top-0 left-0 right-0 z-10 p-1">
         {showEventLabels ? (
           <div className="flex flex-col gap-0.5">
             {evs.slice(0, 2).map(ev => {
               const cfg = getEventConfig(ev.category);
               return (
-                <div key={ev.id} title={ev.title} className="flex items-center gap-1 px-1 py-0.5 rounded text-[8px] font-bold leading-none shadow-sm" style={{ background: ev.color || cfg.color, color: cfg.text }}>
+                <button key={ev.id} onClick={open} title={ev.title} className="flex items-center gap-1 px-1 py-0.5 rounded text-[8px] font-bold leading-none shadow-sm hover:brightness-95 transition" style={{ background: ev.color || cfg.color, color: cfg.text }}>
                   <cfg.Icon size={8} /><span className="truncate">{ev.title}</span>
-                </div>
+                </button>
               );
             })}
-            {evs.length > 2 && <span className="text-[8px] font-bold text-gray-600 bg-white/80 rounded px-1 self-start">+{evs.length - 2}</span>}
+            {evs.length > 2 && <button onClick={open} className="text-[8px] font-bold text-gray-600 bg-white/80 rounded px-1 self-start hover:bg-white">+{evs.length - 2}</button>}
           </div>
         ) : (
-          <div className="flex gap-0.5 flex-wrap">
+          <button onClick={open} title={evs.map(e => e.title).join(', ')} className="flex gap-0.5 flex-wrap">
             {evs.slice(0, 4).map(ev => {
               const cfg = getEventConfig(ev.category);
-              return <span key={ev.id} title={ev.title} className="w-1.5 h-1.5 rounded-full shadow-sm" style={{ background: ev.color || cfg.color }} />;
+              return <span key={ev.id} className="w-1.5 h-1.5 rounded-full shadow-sm" style={{ background: ev.color || cfg.color }} />;
             })}
-          </div>
+          </button>
         )}
       </div>
     );
@@ -605,7 +647,7 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
                           onDragOver={dragItem ? (e) => { e.preventDefault(); setDropTargetISO(iso); } : undefined}
                           onDragLeave={() => setDropTargetISO(prev => (prev === iso ? null : prev))}
                           onDrop={dragItem ? (e) => { e.preventDefault(); handleDropOnCell(iso, cell.item); } : undefined}
-                          onClick={() => cell.item ? setPreview(cell.item.card) : setShowSources(true)}
+                          onClick={() => cell.item ? setPreview(cell.item.card) : setSlotPicker({ iso, kind: 'feed' })}
                           className={`relative rounded-xl overflow-hidden group animate-in fade-in slide-in-from-bottom-1 duration-150 ${resizing ? 'transition-none' : 'transition-all duration-200'} ${isDragSource ? 'opacity-40' : ''} ${slotClass}`}
                         >
                           {renderEventStrip(iso)}
@@ -665,10 +707,15 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
               todayISO={todayISO}
               dragActive={storyDragActive}
               dropTargetISO={dropTargetISO}
+              eventDays={eventDaysSet}
               onHoverDay={setDropTargetISO}
               onDropDay={dropStoryOnDay}
               onOpenDay={openStoryDay}
               onEditDay={editStoryDay}
+              onDragStartDay={setStoryDragFromISO}
+              onDayDragEnd={() => { setStoryDragFromISO(null); setDropTargetISO(null); }}
+              onOpenEvents={setEventDay}
+              onPickDay={(iso) => setSlotPicker({ iso, kind: 'story' })}
             />
           )}
           </div>
@@ -776,6 +823,20 @@ export const FeedPlannerView: React.FC<FeedPlannerViewProps> = ({ nodes, onUpdat
 
       {/* Story viewer — one day's stories only (frames of that day's cards). */}
       {storyPreview && <StoryPreviewModal story={storyPreview} onClose={() => setStoryPreview(null)} brandName={mockupProfile.displayName} username={mockupProfile.username} avatarUrl={mockupProfile.avatarUrl} />}
+
+      {/* Clicking an event marker on a slot / story day → read-only details. */}
+      {eventDay && <EventDetailsModal events={eventsOnDate(eventDay)} dateISO={eventDay} onClose={() => setEventDay(null)} />}
+
+      {/* Clicking an empty slot / story day → pick an unscheduled item for it. */}
+      {slotPicker && (
+        <SlotPickerModal
+          dateISO={slotPicker.iso}
+          kind={slotPicker.kind}
+          items={slotPicker.kind === 'story' ? storySources : feedSources}
+          onPick={(item) => { place(item, slotPicker.iso); setSlotPicker(null); }}
+          onClose={() => setSlotPicker(null)}
+        />
+      )}
 
       {/* Edit the real card in fullscreen, straight from the Feed page.
           CRITICAL (data safety): resolve the LIVE card from `nodes` by id every
